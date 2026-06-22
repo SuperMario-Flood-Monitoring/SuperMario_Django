@@ -8,6 +8,8 @@ FastAPI, WebSocket, 기존 루트 ``scripts/`` 경로에는 의존하지 않는�
 from __future__ import annotations
 
 import math
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,9 @@ CONTROL_LINK_TYPES = {"ORIFICE", "WEIR", "PUMP"}
 
 class PySwmmUnavailable(RuntimeError):
     """PySWMM이 설치되어 있지 않을 때 발생하는 엔진 실행 예외."""
+
+
+_PYSWMM_IMPORT_PROBE_ERROR: str | None = None
 
 
 def safe_number(value: Any, default: float = 0.0) -> float:
@@ -135,10 +140,36 @@ def display_velocity_mps(link_meta: dict[str, Any], flow_cms: float, raw_velocit
 def import_pyswmm() -> tuple[Any, Any, Any]:
     """PySWMM 런타임 클래스를 lazy import한다."""
 
+    global _PYSWMM_IMPORT_PROBE_ERROR
+    if _PYSWMM_IMPORT_PROBE_ERROR is None:
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from pyswmm import Links, Nodes, Simulation",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if probe.returncode != 0:
+            details = (probe.stderr or probe.stdout or "").strip()
+            _PYSWMM_IMPORT_PROBE_ERROR = (
+                f"PySWMM import probe failed with exit code {probe.returncode}."
+                + (f" {details}" if details else "")
+            )
+        else:
+            _PYSWMM_IMPORT_PROBE_ERROR = ""
+
+    if _PYSWMM_IMPORT_PROBE_ERROR:
+        raise PySwmmUnavailable(_PYSWMM_IMPORT_PROBE_ERROR)
+
     try:
         from pyswmm import Links, Nodes, Simulation
     except ModuleNotFoundError as exc:
         raise PySwmmUnavailable(
             "PySWMM is not installed. Install it first with `python3 -m pip install pyswmm`."
         ) from exc
+    except Exception as exc:
+        raise PySwmmUnavailable(f"PySWMM import failed: {exc}") from exc
     return Simulation, Nodes, Links

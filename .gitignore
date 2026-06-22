@@ -54,6 +54,7 @@ media/
 *.out
 *.hst
 *.hotstart
+backend/swmm_engine/logs/runtime-tick-logs/*.jsonl
 _trial_temp/
 tmp/
 temp/

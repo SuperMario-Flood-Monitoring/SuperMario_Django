@@ -89,6 +89,22 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
+### macOS에서 PySWMM import가 `Killed: 9`로 죽는 경우
+
+macOS 로컬 가상환경에서 `swmm-toolkit`의 네이티브 라이브러리 서명/xattr이 깨지면 `from pyswmm import Simulation` 단계에서 Python 프로세스가 바로 종료될 수 있습니다. 이 경우 서버가 `/api/engine/start` 처리 중 끊기면서 브라우저에는 `Failed to fetch`처럼 보입니다.
+
+아래 복구 스크립트로 현재 `.venv` 안의 SWMM 네이티브 파일 metadata와 ad-hoc 서명을 다시 정리합니다.
+
+```bash
+bash scripts/repair-macos-swmm-toolkit.sh
+```
+
+가상환경 경로가 다르면 인자로 넘길 수 있습니다.
+
+```bash
+bash scripts/repair-macos-swmm-toolkit.sh /path/to/.venv
+```
+
 ### 4. DB 마이그레이션
 
 ```bash
