@@ -1,7 +1,14 @@
 .git
+.github
 .idea
 .venv
+.venv*/
 __pycache__
+__pycache__/
 *.py[cod]
+*.sqlite3
 db.sqlite3
 staticfiles
+staticfiles/
+.DS_Store
+*.log

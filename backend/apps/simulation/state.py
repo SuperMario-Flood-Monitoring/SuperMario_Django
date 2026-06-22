@@ -6,6 +6,7 @@ from typing import Any
 from channels.layers import get_channel_layer
 
 from swmm_engine.interface import create_engine_session
+from swmm_engine.llm_dispatcher import schedule_llm_analysis_dispatch
 
 
 GROUP_NAME = "simulation"
@@ -23,6 +24,7 @@ def status_payload() -> dict[str, Any]:
 
 
 async def broadcast(payload: dict[str, Any]) -> None:
+    schedule_llm_analysis_dispatch(payload)
     channel_layer = get_channel_layer()
     await channel_layer.group_send(
         GROUP_NAME,

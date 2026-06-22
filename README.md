@@ -166,6 +166,8 @@ ws://127.0.0.1:8000/ws/simulation
 
 클라이언트가 연결되면 현재 엔진 snapshot이 있으면 snapshot을, 없으면 엔진 상태 payload를 즉시 전송합니다.
 
+1초 snapshot에는 `risk`와 `llmTrigger`가 optional로 포함됩니다. `llmTrigger.shouldTrigger`가 `true`인 snapshot은 `apps/simulation/state.py`의 `broadcast()`에서 `swmm_engine.llm_dispatcher.schedule_llm_analysis_dispatch()`로 전달됩니다. 현재 dispatcher는 실제 SuperMario_LLM HTTP 호출을 하지 않는 placeholder이며, 이후 `swmm_engine/llm_dispatcher.py`의 `dispatch_llm_analysis()` 안에 `/analyze` 호출, 기상청 데이터 결합, retry/로그 정책을 채우면 됩니다.
+
 ## 주요 요청 예시
 
 ### 시나리오 생성
@@ -231,6 +233,8 @@ SuperMario_Django/
 │   ├── swmm_engine/
 │   │   ├── converter/       # React layout -> SWMM INP 변환
 │   │   ├── engine/          # 실시간 SWMM runtime session
+│   │   ├── risk/            # snapshot 이상상황 감지와 LLM context 생성
+│   │   ├── llm_dispatcher.py # 향후 SuperMario_LLM 호출 hook
 │   │   ├── interface.py     # Django에서 호출하는 엔진 interface
 │   │   └── logs/            # runtime tick log
 │   ├── legacy/              # 팀원 테스트/레거시 코드
@@ -260,6 +264,7 @@ SuperMario_Django/
 - React layout 객체 ID와 SWMM 변환 mapping을 임의로 분리하지 않습니다.
 - 엔진은 Django view에서 직접 계산하지 않고 `swmm_engine.interface`를 통해 실행합니다.
 - WebSocket broadcast는 Channels group event를 사용하며, `swmm.message` event는 consumer의 `swmm_message` handler로 전달됩니다.
+- LLM 서버 호출은 SWMM 엔진 내부가 아니라 `swmm_engine.llm_dispatcher.dispatch_llm_analysis()`에서 연결합니다.
 
 ## 검증 명령
 
