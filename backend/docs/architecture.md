@@ -60,8 +60,8 @@ flowchart LR
 
 ### 시뮬레이션 및 방송
 
-1. 클라이언트가 `/ws/simulation/`을 구독한다.
-2. 클라이언트가 `POST /api/simulations/`로 강수 상황을 보낸다.
+1. 클라이언트가 `/api/ws/simulation/`을 구독한다.
+2. 클라이언트가 `POST /api/engine/start`로 layout과 제어값을 보낸다.
 3. 백엔드가 활성 시설의 정상값을 조회한다.
 4. 모델과 제어 계약을 검증하고 SWMM `.inp` 내용을 생성한다.
 5. PySWMM이 지정된 계산 간격으로 동적 파랑 해석을 실행한다.

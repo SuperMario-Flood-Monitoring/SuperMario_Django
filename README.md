@@ -42,7 +42,7 @@ React 시뮬레이션모드
   -> SWMM 런타임 세션 시작
   -> 백그라운드 run loop에서 1초 tick 진행
   -> 최신 snapshot 저장
-  -> WebSocket /ws/simulation 으로 snapshot broadcast
+  -> WebSocket /api/ws/simulation 으로 snapshot broadcast
 ```
 
 SWMM 계산 결과의 source of truth는 서버의 `swmm_engine`입니다. React는 강수량, 막힘, 배속 같은 제어값을 전달하고, 서버 snapshot을 화면에 렌더링합니다.
@@ -110,35 +110,35 @@ http://127.0.0.1:8000/
 ### 6. 서버 상태 확인
 
 ```bash
-curl http://127.0.0.1:8000/engine/status
+curl http://127.0.0.1:8000/api/engine/status
 ```
 
 ## API
 
 ### Engine API
 
-기본 prefix는 `/engine/`입니다.
+기본 공개 prefix는 `/api/engine/`입니다.
 
 | 기능 | Method | Endpoint |
 | --- | --- | --- |
-| 헬스 체크 | GET | `/engine/health` |
-| 엔진 상태 | GET | `/engine/status` |
-| 엔진 시작 | POST | `/engine/start` |
-| 엔진 리셋 | POST | `/engine/reset` |
-| 제어값 변경 | POST | `/engine/control` |
-| 엔진 정지 | POST | `/engine/stop` |
-| 엔진 일시정지 | POST | `/engine/pause` |
-| 엔진 재개 | POST | `/engine/resume` |
+| 헬스 체크 | GET | `/api/engine/health` |
+| 엔진 상태 | GET | `/api/engine/status` |
+| 엔진 시작 | POST | `/api/engine/start` |
+| 엔진 리셋 | POST | `/api/engine/reset` |
+| 제어값 변경 | POST | `/api/engine/control` |
+| 엔진 정지 | POST | `/api/engine/stop` |
+| 엔진 일시정지 | POST | `/api/engine/pause` |
+| 엔진 재개 | POST | `/api/engine/resume` |
 
 ### Editor API
 
-기본 prefix는 `/editor/`입니다.
+기본 공개 prefix는 `/api/editor/`입니다.
 
 | 기능 | Method | Endpoint |
 | --- | --- | --- |
-| 변환 검증 | POST | `/editor/convert/validate` |
-| INP 다운로드 | POST | `/editor/export-inp` |
-| INP/report/mapping ZIP 다운로드 | POST | `/editor/convert/download` |
+| 변환 검증 | POST | `/api/editor/convert/validate` |
+| INP 다운로드 | POST | `/api/editor/export-inp` |
+| INP/report/mapping ZIP 다운로드 | POST | `/api/editor/convert/download` |
 
 ### Scenario API
 
@@ -161,7 +161,7 @@ GET /api/scenarios?includeInactive=true
 ### WebSocket
 
 ```text
-ws://127.0.0.1:8000/ws/simulation
+ws://127.0.0.1:8000/api/ws/simulation
 ```
 
 클라이언트가 연결되면 현재 엔진 snapshot이 있으면 snapshot을, 없으면 엔진 상태 payload를 즉시 전송합니다.
@@ -276,7 +276,7 @@ python manage.py migrate --check
 API smoke test:
 
 ```bash
-curl http://127.0.0.1:8000/engine/status
+curl http://127.0.0.1:8000/api/engine/status
 curl http://127.0.0.1:8000/api/scenarios
 ```
 
@@ -288,4 +288,4 @@ React 클라이언트는 별도 레포에서 실행합니다.
 /Users/onseoktae/Documents/Team_Supermario/SuperMario_React
 ```
 
-React의 기본 백엔드 주소는 `http://127.0.0.1:8000`입니다.
+React local 개발 기본 백엔드 주소는 `http://127.0.0.1:8000/api`입니다.
