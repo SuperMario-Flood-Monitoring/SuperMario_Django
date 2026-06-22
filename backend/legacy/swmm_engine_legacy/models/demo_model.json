@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "groundSurfaceY": 330,
+  "nodes": [
+    {
+      "id": "catch_basin_1",
+      "swmmId": "CB_1",
+      "name": "빗물받이 1",
+      "type": "catchBasin",
+      "x": 100,
+      "y": 100,
+      "props": {
+        "maxDepth": 1.2,
+        "catchmentArea": 1.5,
+        "impervious": 80,
+        "catchmentWidth": 120
+      }
+    },
+    {
+      "id": "manhole_1",
+      "swmmId": "MH_1",
+      "name": "맨홀 1",
+      "type": "manhole",
+      "x": 300,
+      "y": 160,
+      "props": {
+        "maxDepth": 1.5
+      }
+    },
+    {
+      "id": "outfall_1",
+      "swmmId": "OUT_1",
+      "name": "방류구 1",
+      "type": "outfall",
+      "x": 520,
+      "y": 220,
+      "props": {}
+    }
+  ],
+  "links": [
+    {
+      "id": "pipe_1",
+      "swmmId": "P_1",
+      "name": "우수관 1",
+      "type": "relation",
+      "from": {
+        "nodeId": "catch_basin_1",
+        "portId": "right"
+      },
+      "to": {
+        "nodeId": "manhole_1",
+        "portId": "left"
+      },
+      "size": "medium",
+      "props": {
+        "slope": 0.01,
+        "blockage": 0
+      }
+    },
+    {
+      "id": "pipe_2",
+      "swmmId": "P_2",
+      "name": "우수관 2",
+      "type": "relation",
+      "from": {
+        "nodeId": "manhole_1",
+        "portId": "right"
+      },
+      "to": {
+        "nodeId": "outfall_1",
+        "portId": "left"
+      },
+      "size": "medium",
+      "props": {
+        "slope": 0.01,
+        "blockage": 0
+      }
+    }
+  ]
+}

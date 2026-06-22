@@ -1,0 +1,81 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# Python build and package output
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Tests, coverage, and static analysis
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.hypothesis/
+
+# Django local data and generated files
+*.sqlite3
+*.sqlite3-journal
+db.sqlite3
+staticfiles/
+media/
+
+# Local reference docs and prompt notes
+/docs/
+/prompt/
+
+# SWMM runtime output
+*.rpt
+*.out
+*.hst
+*.hotstart
+_trial_temp/
+tmp/
+temp/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Local Docker overrides
+docker-compose.override.yml
+
+# IDE and editor settings
+.idea/
+.vscode/
+*.iml
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/

@@ -1,0 +1,8 @@
+asgiref==3.11.1
+channels[daphne]>=4.3,<5
+Django==6.0.6
+django-cors-headers==4.9.0
+django-ninja==1.6.2
+pyswmm[swmm5-2-4]==2.1.0
+sqlparse==0.5.5
+tzdata==2026.2

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SWMM Engine Demo</title>
+  <style>
+    body { max-width: 1200px; margin: 24px auto; padding: 0 16px; font-family: sans-serif; }
+    textarea, pre { width: 100%; box-sizing: border-box; font-family: monospace; }
+    textarea { min-height: 360px; }
+    pre { min-height: 180px; overflow: auto; padding: 12px; color: #d8dee9; background: #20242c; }
+    button { margin: 8px 8px 8px 0; padding: 10px 16px; }
+    .status { font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #bbb; padding: 8px; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    .NORMAL { color: #18723a; }
+    .WARNING { color: #ad6500; }
+    .CRITICAL { color: #c62828; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>PySWMM Engine Demo</h1>
+  <p>시설 초기 상태를 저장한 뒤 실행합니다. 30초 동안 1초 간격으로 SWMM 상태가 동기화됩니다.</p>
+  <p class="status">WebSocket: <span id="socket-status">연결 중</span></p>
+  <p class="status">시설 초기화: <span id="facility-status">미실행</span></p>
+  <h2>시설 초기 상태</h2>
+  <p><code>initial_water_percent</code>, <code>blockage_percent</code>,
+    <code>obstruction_type</code>을 수정할 수 있습니다.</p>
+  <textarea id="facilities">{{ facilities }}</textarea>
+  <h2>SWMM 모델 및 제어값</h2>
+  <textarea id="payload">{{ payload }}</textarea>
+  <div>
+    <button id="initialize">더미 시설 초기화</button>
+    <button id="run">시뮬레이션 실행</button>
+    <button id="stop">중지 요청</button>
+  </div>
+  <h2>실시간 시설 상태</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>시설</th>
+        <th>유형</th>
+        <th>물 채움</th>
+        <th>유량</th>
+        <th>폐색</th>
+        <th>상태</th>
+      </tr>
+    </thead>
+    <tbody id="facility-output">
+      <tr><td colspan="6">수신 대기 중</td></tr>
+    </tbody>
+  </table>
+  <h2>HTTP 결과</h2>
+  <pre id="http-output">실행 전</pre>
+  <h2>WebSocket 최신 단계</h2>
+  <pre id="socket-output">수신 대기 중</pre>
+
+  <script>
+    const status = document.querySelector("#socket-status");
+    const socketOutput = document.querySelector("#socket-output");
+    const protocol = location.protocol === "https:" ? "wss" : "ws";
+    const socket = new WebSocket(`${protocol}://${location.host}/ws/simulation/`);
+    socket.onopen = () => status.textContent = "연결됨";
+    socket.onclose = () => status.textContent = "종료됨";
+    socket.onerror = () => status.textContent = "오류";
+    socket.onmessage = event => {
+      const message = JSON.parse(event.data);
+      socketOutput.textContent = JSON.stringify(message, null, 2);
+      const facilities = message.data?.facilities;
+      if (Array.isArray(facilities)) {
+        document.querySelector("#facility-output").innerHTML = facilities.map(item => `
+          <tr>
+            <td>${item.id}</td>
+            <td>${item.object_type}</td>
+            <td>${item.water_level_percent.toFixed(2)}%</td>
+            <td>${item.flow.toFixed(6)} ${item.flow_unit}</td>
+            <td>${item.blockage_percent.toFixed(1)}%</td>
+            <td class="${item.status}">${item.status}</td>
+          </tr>
+        `).join("");
+      }
+    };
+
+    async function postJson(url, body = {}) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"},
+        body: JSON.stringify(body)
+      });
+      return response.json();
+    }
+
+    document.querySelector("#initialize").onclick = async () => {
+      const result = await postJson(
+        "/api/facilities/",
+        JSON.parse(document.querySelector("#facilities").value)
+      );
+      document.querySelector("#facility-status").textContent =
+        result.status === "OK" ? `${result.data.length}개 저장 완료` : result.message;
+      document.querySelector("#http-output").textContent =
+        JSON.stringify(result, null, 2);
+    };
+
+    document.querySelector("#run").onclick = async () => {
+      const output = document.querySelector("#http-output");
+      output.textContent = "실행 중...";
+      try {
+        const payload = JSON.parse(document.querySelector("#payload").value);
+        output.textContent = JSON.stringify(
+          await postJson("/api/simulations/", payload),
+          null,
+          2
+        );
+      } catch (error) {
+        output.textContent = String(error);
+      }
+    };
+
+    document.querySelector("#stop").onclick = async () => {
+      document.querySelector("#http-output").textContent = JSON.stringify(
+        await postJson("/api/simulations/stop/"),
+        null,
+        2
+      );
+    };
+  </script>
+</body>
+</html>

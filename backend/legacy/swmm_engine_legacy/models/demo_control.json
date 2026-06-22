@@ -1,0 +1,26 @@
+{
+  "version": "2026-06-15-swmm-control-v1",
+  "contractVersion": "2026-06-15-swmm-engine-v1",
+  "sourceOfTruth": "SWMM",
+  "reason": "level-4-realtime-demo",
+  "stepSeconds": 1,
+  "durationSeconds": 30,
+  "realtime": true,
+  "broadcastIntervalSeconds": 1,
+  "rainfall": 80,
+  "rainfallRatio": 1,
+  "exceptions": [],
+  "blockagesById": {
+    "pipe_1": 0,
+    "pipe_2": 0
+  },
+  "obstructionsById": {},
+  "physicsMode": "swmm-step",
+  "htmlRole": "render_only_with_controls",
+  "selected": {
+    "id": "pipe_1",
+    "swmmId": "P_1",
+    "objectType": "pipe"
+  },
+  "updatedAt": "2026-06-15T07:11:43.090Z"
+}
