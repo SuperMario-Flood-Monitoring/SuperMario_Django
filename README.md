@@ -107,7 +107,7 @@ bash scripts/repair-macos-swmm-toolkit.sh /path/to/.venv
 
 ### 4. 로컬 Docker Compose로 실행
 
-로컬에서 Docker를 사용할 경우 backend와 PostgreSQL을 함께 실행합니다. `docker-compose.yml`은 `postgres:16-alpine` 이미지를 자동으로 pull하고, DB healthcheck가 통과한 뒤 Django가 `migrate` 후 Daphne을 시작합니다.
+로컬에서 Docker를 사용할 경우 backend와 PostgreSQL을 함께 실행합니다. `docker-compose.yml`은 `postgres:16-alpine` 이미지를 자동으로 pull하고, DB healthcheck가 통과한 뒤 Django가 `migrate`, 초기 ADMIN 확인 후 Daphne을 시작합니다.
 
 ```bash
 docker compose up --build
@@ -323,6 +323,11 @@ SuperMario_Django/
 | `DJANGO_DEBUG` | `true` | Django debug 모드 |
 | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | 허용 host 목록 |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | React 개발 서버 CORS 허용 origin |
+| `SUPERMARIO_JWT_SECRET_KEY` | `DJANGO_SECRET_KEY` | access/refresh JWT 서명 키 |
+| `SUPERMARIO_REFRESH_COOKIE_SAMESITE` | `Lax` | refresh cookie SameSite 정책 |
+| `SUPERMARIO_REFRESH_COOKIE_SECURE` | local `false`, prod `true` | refresh cookie Secure 설정 |
+| `SUPERMARIO_INITIAL_ADMIN_USERNAME` | `admin` | ADMIN이 없을 때 자동 생성할 초기 관리자 ID |
+| `SUPERMARIO_INITIAL_ADMIN_PASSWORD` | `수퍼마리오4` | ADMIN이 없을 때 자동 생성할 초기 관리자 비밀번호 |
 | `DATABASE_ENGINE` | `sqlite` | DB 엔진. `sqlite`, `postgres` 지원 |
 | `SQLITE_PATH` | `backend/db.sqlite3` | SQLite DB 파일 경로 |
 | `POSTGRES_DB` | `supermario` | PostgreSQL database 이름 |

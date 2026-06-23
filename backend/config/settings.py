@@ -15,7 +15,10 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-development-only")
 SUPERMARIO_JWT_SECRET_KEY = os.getenv("SUPERMARIO_JWT_SECRET_KEY", SECRET_KEY)
 DEBUG = os.getenv("DJANGO_DEBUG", "false" if IS_PRODUCTION else "true").lower() == "true"
 SUPERMARIO_REFRESH_COOKIE_SAMESITE = os.getenv("SUPERMARIO_REFRESH_COOKIE_SAMESITE", "Lax")
-SUPERMARIO_REFRESH_COOKIE_SECURE = os.getenv("SUPERMARIO_REFRESH_COOKIE_SECURE", "true").lower() == "true"
+SUPERMARIO_REFRESH_COOKIE_SECURE = os.getenv(
+    "SUPERMARIO_REFRESH_COOKIE_SECURE",
+    "true" if IS_PRODUCTION else "false",
+).lower() == "true"
 
 DEFAULT_ALLOWED_HOSTS = (
     "supermario.o-r.kr,59.9.136.144,192.168.0.101,localhost,127.0.0.1"

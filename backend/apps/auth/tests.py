@@ -1,6 +1,8 @@
 import json
+from io import StringIO
 
-from django.contrib.auth.hashers import make_password
+from django.contrib.auth.hashers import check_password, make_password
+from django.core.management import call_command
 from django.test import TestCase
 
 from .cookies import REFRESH_COOKIE_NAME
@@ -85,3 +87,30 @@ class AuthApiTests(TestCase):
         response = self.client.get("/api/scenarios", HTTP_AUTHORIZATION=f"Bearer {token}")
 
         self.assertEqual(response.status_code, 200)
+
+
+class EnsureAdminUserCommandTests(TestCase):
+    def test_creates_default_admin_when_missing(self):
+        stdout = StringIO()
+
+        call_command("ensure_admin_user", "--only-if-no-admin", stdout=stdout)
+
+        user = User.objects.get(username="admin")
+        self.assertEqual(user.role, User.Role.ADMIN)
+        self.assertTrue(check_password("수퍼마리오4", user.password))
+        self.assertIn("Created ADMIN user admin.", stdout.getvalue())
+
+    def test_skips_default_admin_when_admin_exists(self):
+        existing = User.objects.create(
+            username="root",
+            role=User.Role.ADMIN,
+            password=make_password("keep-this-password"),
+        )
+        stdout = StringIO()
+
+        call_command("ensure_admin_user", "--only-if-no-admin", stdout=stdout)
+
+        existing.refresh_from_db()
+        self.assertTrue(check_password("keep-this-password", existing.password))
+        self.assertFalse(User.objects.filter(username="admin").exists())
+        self.assertIn("ADMIN user already exists. Skipped.", stdout.getvalue())

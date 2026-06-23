@@ -1,19 +1,41 @@
+import os
+
 from django.contrib.auth.hashers import make_password
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.auth.models import User
+
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "수퍼마리오4"
 
 
 class Command(BaseCommand):
     help = "Create or update the initial ADMIN account for the custom auth table."
 
     def add_arguments(self, parser):
-        parser.add_argument("--username", required=True)
-        parser.add_argument("--password", required=True)
+        parser.add_argument("--username")
+        parser.add_argument("--password")
+        parser.add_argument(
+            "--only-if-no-admin",
+            action="store_true",
+            help="Skip without changes when any ADMIN user already exists.",
+        )
 
     def handle(self, *args, **options):
-        username = str(options["username"]).strip()
-        password = str(options["password"])
+        if options["only_if_no_admin"] and User.objects.filter(role=User.Role.ADMIN).exists():
+            self.stdout.write(self.style.SUCCESS("ADMIN user already exists. Skipped."))
+            return
+
+        username = str(
+            options["username"]
+            or os.getenv("SUPERMARIO_INITIAL_ADMIN_USERNAME")
+            or DEFAULT_ADMIN_USERNAME
+        ).strip()
+        password = str(
+            options["password"]
+            or os.getenv("SUPERMARIO_INITIAL_ADMIN_PASSWORD")
+            or DEFAULT_ADMIN_PASSWORD
+        )
         if not username:
             raise CommandError("--username is required.")
         if not password:
