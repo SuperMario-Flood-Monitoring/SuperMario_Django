@@ -182,7 +182,7 @@ ws://127.0.0.1:8000/api/ws/simulation
 
 클라이언트가 연결되면 현재 엔진 snapshot이 있으면 snapshot을, 없으면 엔진 상태 payload를 즉시 전송합니다.
 
-1초 snapshot에는 `risk`와 `llmTrigger`가 optional로 포함됩니다. `llmTrigger.shouldTrigger`가 `true`인 snapshot은 `apps/simulation/state.py`의 `broadcast()`에서 `swmm_engine.llm_dispatcher.schedule_llm_analysis_dispatch()`로 전달됩니다. 현재 dispatcher는 실제 SuperMario_LLM HTTP 호출을 하지 않는 placeholder이며, 이후 `swmm_engine/llm_dispatcher.py`의 `dispatch_llm_analysis()` 안에 `/analyze` 호출, 기상청 데이터 결합, retry/로그 정책을 채우면 됩니다.
+1초 snapshot에는 `risk`와 `llmTrigger`가 optional로 포함됩니다. `risk.policy.level`은 `SUPERMARIO_RISK_POLICY_LEVEL` 값이며, 기본 `balanced`는 시작 직후 30 tick 동안 미세 역류를 안정화 구간으로 보고, 역류 유량/지속시간 기준을 만족한 뒤에만 WARNING/CRITICAL 위험으로 확정합니다. `llmTrigger.shouldTrigger`가 `true`인 snapshot은 `apps/simulation/state.py`의 `broadcast()`에서 `swmm_engine.llm_dispatcher.schedule_llm_analysis_dispatch()`로 전달됩니다. 현재 dispatcher는 실제 SuperMario_LLM HTTP 호출을 하지 않는 placeholder이며, 이후 `swmm_engine/llm_dispatcher.py`의 `dispatch_llm_analysis()` 안에 `/analyze` 호출, 기상청 데이터 결합, retry/로그 정책을 채우면 됩니다.
 
 ## 주요 요청 예시
 
@@ -269,6 +269,8 @@ SuperMario_Django/
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | React 개발 서버 CORS 허용 origin |
 | `SQLITE_PATH` | `backend/db.sqlite3` | SQLite DB 파일 경로 |
 | `ENABLE_LEGACY_SIMULATION_API` | `false` | legacy simulation API 활성화 여부 |
+| `SUPERMARIO_RISK_POLICY_LEVEL` | `balanced` | 이상상황 확정 기준 레벨. `sensitive`, `balanced`, `strict` 지원 |
+| `SUPERMARIO_RISK_PAUSE_ON_TRIGGER` | `false` | 디버깅용. `true`이면 LLM trigger 발생 tick에서 엔진을 자동 일시정지 |
 
 > macOS 기본 `python3`가 3.9 계열이면 `Django==6.0.6` 설치가 실패합니다. 이 경우 Homebrew, pyenv 등으로 Python 3.12 이상을 준비한 뒤 가상환경을 생성해야 합니다.
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import tempfile
 import time
 from dataclasses import dataclass
@@ -30,7 +31,12 @@ from swmm_engine.converter import (
     render_inp,
     render_mapping_json,
 )
-from swmm_engine.risk import build_swmm_context_packet, evaluate_swmm_risk
+from swmm_engine.risk import (
+    build_swmm_context_packet,
+    evaluate_swmm_risk,
+    get_risk_policy,
+    normalize_risk_policy_level,
+)
 
 from .bridge import (
     CONTROL_LINK_TYPES,
@@ -52,9 +58,17 @@ DEFAULT_SPEED_MULTIPLIER = 1.0
 MAX_SPEED_MULTIPLIER = 10.0
 MAX_RAINFALL_RATIO = 1000.0
 RUNTIME_TICK_LOG_DIR = PACKAGE_DIR / "logs" / "runtime-tick-logs"
-RISK_ALERT_SEVERITIES = {"WARNING", "CRITICAL"}
+RISK_POLICY_LEVEL = normalize_risk_policy_level(os.getenv("SUPERMARIO_RISK_POLICY_LEVEL"))
+RISK_POLICY = get_risk_policy(RISK_POLICY_LEVEL)
+RISK_ALERT_SEVERITIES = set(RISK_POLICY.get("llmAlertSeverities") or ("CRITICAL",))
 RISK_CONTEXT_LEVEL = "optimal"
-RISK_RESOLUTION_GRACE_TICKS = 3
+RISK_RESOLUTION_GRACE_TICKS = int(RISK_POLICY.get("resolutionGraceTicks") or 5)
+RISK_PAUSE_ON_TRIGGER = str(os.getenv("SUPERMARIO_RISK_PAUSE_ON_TRIGGER", "false")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 RISK_SEVERITY_RANK = {
     "NORMAL": 0,
     "WATCH": 1,
@@ -660,13 +674,14 @@ class RealtimeSwmmSession:
             "resolvedIssues": resolved_issues,
             "suppression": {
                 "policy": "trigger_once_until_resolved_or_escalated",
+                "riskPolicyLevel": RISK_POLICY_LEVEL,
                 "alertSeverities": sorted(RISK_ALERT_SEVERITIES),
                 "resolutionGraceTicks": RISK_RESOLUTION_GRACE_TICKS,
             },
         }
 
     def _risk_issue_record(self, issue_id: str, event: dict[str, Any]) -> dict[str, Any]:
-        return {
+        record = {
             "issueId": issue_id,
             "eventId": event.get("eventId"),
             "eventType": event.get("eventType"),
@@ -676,6 +691,47 @@ class RealtimeSwmmSession:
             "metrics": event.get("metrics", {}),
             "lastSeenStepIndex": self.step_index,
         }
+        record.update(self.risk_source_metadata(event))
+        return record
+
+    def risk_source_metadata(self, event: dict[str, Any]) -> dict[str, Any]:
+        source = str(event.get("source") or "")
+        source_id = str(event.get("sourceId") or "")
+        if source == "link":
+            link_meta = self.swmm_links.get(source_id) if isinstance(self.swmm_links, dict) else {}
+            if not isinstance(link_meta, dict):
+                link_meta = {}
+            from_node = str(link_meta.get("fromNode") or "")
+            to_node = str(link_meta.get("toNode") or "")
+            from_node_meta = self.swmm_nodes.get(from_node) if isinstance(self.swmm_nodes, dict) else {}
+            to_node_meta = self.swmm_nodes.get(to_node) if isinstance(self.swmm_nodes, dict) else {}
+            if not isinstance(from_node_meta, dict):
+                from_node_meta = {}
+            if not isinstance(to_node_meta, dict):
+                to_node_meta = {}
+            return {
+                "displayName": link_meta.get("sourceEditorName") or source_id,
+                "sourceEditorId": link_meta.get("sourceEditorId"),
+                "sourceEditorType": link_meta.get("sourceEditorType"),
+                "sourceEditorName": link_meta.get("sourceEditorName"),
+                "pipeKind": link_meta.get("pipeKind"),
+                "fromNode": from_node or None,
+                "toNode": to_node or None,
+                "fromNodeName": from_node_meta.get("sourceEditorName") or from_node or None,
+                "toNodeName": to_node_meta.get("sourceEditorName") or to_node or None,
+                "lengthM": link_meta.get("length"),
+            }
+        if source == "node":
+            node_meta = self.swmm_nodes.get(source_id) if isinstance(self.swmm_nodes, dict) else {}
+            if not isinstance(node_meta, dict):
+                node_meta = {}
+            return {
+                "displayName": node_meta.get("sourceEditorName") or source_id,
+                "sourceEditorId": node_meta.get("sourceEditorId"),
+                "sourceEditorType": node_meta.get("sourceEditorType"),
+                "sourceEditorName": node_meta.get("sourceEditorName"),
+            }
+        return {"displayName": source_id}
 
     def _risk_trigger_reason(self, new_issues: list[dict[str, Any]], escalated_issues: list[dict[str, Any]]) -> str | None:
         if new_issues and escalated_issues:
@@ -687,7 +743,11 @@ class RealtimeSwmmSession:
         return None
 
     def attach_risk_payload(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        risk_result = evaluate_swmm_risk(snapshot, previous_state=self.previous_risk_result)
+        risk_result = evaluate_swmm_risk(
+            snapshot,
+            previous_state=self.previous_risk_result,
+            policy_level=RISK_POLICY_LEVEL,
+        )
         trigger = self.update_risk_issue_lifecycle(risk_result)
         snapshot["risk"] = {
             "ok": risk_result.get("ok", False),
@@ -696,12 +756,14 @@ class RealtimeSwmmSession:
             "summary": risk_result.get("summary", {}),
             "validation": risk_result.get("validation", {}),
             "counters": risk_result.get("counters", {}),
+            "policy": risk_result.get("policy", RISK_POLICY),
         }
         if trigger["shouldTrigger"]:
             trigger["context"] = build_swmm_context_packet(
                 snapshot,
                 risk_result,
                 context_level=RISK_CONTEXT_LEVEL,
+                policy_level=RISK_POLICY_LEVEL,
                 system_meta={
                     "sourceService": "SuperMario_Django",
                     "targetService": "SuperMario_LLM",
@@ -918,6 +980,21 @@ class SwmmRuntimeEngine:
             if self.session is None:
                 return
             self.session.last_snapshot = snapshot
+            trigger = snapshot.get("llmTrigger") if isinstance(snapshot, dict) else None
+            if RISK_PAUSE_ON_TRIGGER and isinstance(trigger, dict) and trigger.get("shouldTrigger"):
+                snapshot["debugPause"] = {
+                    "reason": "risk_trigger",
+                    "enabledBy": "SUPERMARIO_RISK_PAUSE_ON_TRIGGER",
+                    "stepIndex": snapshot.get("stepIndex"),
+                    "triggeredIssues": trigger.get("triggeredIssues", []),
+                }
+                self.paused = True
+                if self.session is not None:
+                    self.session.append_runtime_event("risk_debug_paused", {
+                        "message": "Paused automatically after risk trigger.",
+                        "triggeredIssues": trigger.get("triggeredIssues", []),
+                    })
+                return
             elapsed = time.monotonic() - started_at
             step_delay = self.session.step_seconds / max(DEFAULT_SPEED_MULTIPLIER, self.session.speed_multiplier)
             await asyncio.sleep(max(0.0, step_delay - elapsed))

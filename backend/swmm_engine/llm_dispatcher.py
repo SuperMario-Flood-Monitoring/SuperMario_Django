@@ -8,14 +8,19 @@ to SuperMario_LLM once that API contract is ready.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import deque
 from collections.abc import Mapping
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 
 logger = logging.getLogger(__name__)
 
+PACKAGE_DIR = Path(__file__).resolve().parent
+LLM_DISPATCH_LOG_PATH = PACKAGE_DIR / "logs" / "llm-dispatch.jsonl"
 MAX_REMEMBERED_DISPATCH_KEYS = 1000
 _scheduled_dispatch_keys: set[str] = set()
 _scheduled_dispatch_key_order: deque[str] = deque()
@@ -46,6 +51,15 @@ def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
     if not remember_dispatch_key(dispatch_key):
         return False
 
+    append_llm_dispatch_log(payload, trigger, context, dispatch_key)
+    logger.warning(
+        "LLM would-dispatch. dispatchKey=%s runId=%s stepIndex=%s reason=%s issues=%s",
+        dispatch_key,
+        payload.get("runId"),
+        payload.get("stepIndex"),
+        trigger.get("reason"),
+        summarize_triggered_issues(trigger),
+    )
     asyncio.create_task(dispatch_llm_analysis(payload, trigger, context, dispatch_key))
     return True
 
@@ -74,7 +88,7 @@ async def dispatch_llm_analysis(
             response.raise_for_status()
     """
 
-    logger.info(
+    logger.debug(
         "LLM dispatch placeholder. dispatchKey=%s runId=%s stepIndex=%s reason=%s contextKeys=%s",
         dispatch_key,
         snapshot.get("runId"),
@@ -88,6 +102,57 @@ async def dispatch_llm_analysis(
         "dispatchKey": dispatch_key,
         "targetService": "SuperMario_LLM",
     }
+
+
+def append_llm_dispatch_log(
+    payload: Mapping[str, Any],
+    trigger: Mapping[str, Any],
+    context: Mapping[str, Any],
+    dispatch_key: str,
+) -> None:
+    """Write one local JSONL record for every would-call trigger."""
+
+    try:
+        LLM_DISPATCH_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "loggedAt": datetime.now().isoformat(timespec="milliseconds"),
+            "dispatchKey": dispatch_key,
+            "status": "placeholder_not_sent",
+            "runId": payload.get("runId"),
+            "stepIndex": payload.get("stepIndex"),
+            "modelTime": payload.get("modelTime"),
+            "reason": trigger.get("reason"),
+            "contextLevel": trigger.get("contextLevel"),
+            "highestSeverity": context.get("highestSeverity"),
+            "riskEventCount": len(context.get("riskEvents") or []),
+            "triggeredIssues": summarize_triggered_issues(trigger),
+        }
+        with LLM_DISPATCH_LOG_PATH.open("a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except Exception as exc:  # pragma: no cover - local logging must not stop simulation
+        logger.warning("Failed to write LLM dispatch placeholder log: %s", exc)
+
+
+def summarize_triggered_issues(trigger: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return compact issue details for console/file logs."""
+
+    issues: list[dict[str, Any]] = []
+    for issue in trigger.get("triggeredIssues") or []:
+        if not isinstance(issue, Mapping):
+            continue
+        issues.append({
+            "issueId": issue.get("issueId"),
+            "eventType": issue.get("eventType"),
+            "severity": issue.get("severity"),
+            "sourceId": issue.get("sourceId"),
+            "displayName": issue.get("displayName"),
+            "sourceEditorName": issue.get("sourceEditorName"),
+            "fromNode": issue.get("fromNode"),
+            "fromNodeName": issue.get("fromNodeName"),
+            "toNode": issue.get("toNode"),
+            "toNodeName": issue.get("toNodeName"),
+        })
+    return issues
 
 
 def build_llm_dispatch_key(payload: Mapping[str, Any], trigger: Mapping[str, Any]) -> str:
