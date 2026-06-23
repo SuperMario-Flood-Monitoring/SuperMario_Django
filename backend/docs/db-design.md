@@ -1,12 +1,26 @@
 # 데이터베이스 구조
 
-## 개요
+## 문서 정보
 
 - DBMS: PostgreSQL for Docker/production, SQLite fallback for bare local Python
 - Django ORM: Django 6.0.6
 - Python 단독 실행 기본 DB: `db.sqlite3`
 - Docker/production DB: PostgreSQL `postgres_data` volume
 - 시간대: `Asia/Seoul`
+
+## 데이터베이스 설정
+
+`DATABASE_ENGINE=postgres`이면 PostgreSQL을 사용하고, 그 외에는 SQLite를 사용한다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `DATABASE_ENGINE` | `sqlite` | `sqlite` 또는 `postgres` |
+| `SQLITE_PATH` | `BASE_DIR / db.sqlite3` | SQLite 파일 경로 |
+| `POSTGRES_DB` | `supermario` | PostgreSQL DB 이름 |
+| `POSTGRES_USER` | `supermario` | PostgreSQL 사용자 |
+| `POSTGRES_PASSWORD` | 빈 문자열 | PostgreSQL 비밀번호 |
+| `POSTGRES_HOST` | `postgres` | PostgreSQL 호스트 |
+| `POSTGRES_PORT` | `5432` | PostgreSQL 포트 |
 
 ## ERD
 
@@ -25,24 +39,38 @@ erDiagram
         datetime updated_at
     }
 
-    SIMULATION_RUN {
+    SCENARIO {
         bigint id PK
-        varchar rainfall_status
-        float rainfall_amount
-        integer duration_minutes
-        json parameters
-        json result
-        varchar status
+        varchar title
+        text description
+        json layout_json
+        integer version
+        boolean is_active
         datetime created_at
+        datetime updated_at
+    }
+
+    USERS {
+        bigint USER_ID PK
+        varchar ROLE
+        varchar USERNAME UK
+        varchar PASSWORD
+        varchar REFRESH_TOKEN
+    }
+
+    NOTIFICATIONS {
+        bigint TOKEN_ID PK
+        varchar NAME UK
+        varchar TELEGRAM_TOKEN
     }
 ```
 
-현재 두 테이블 사이에 외래 키는 없다. 시뮬레이션 결과에는 실행 당시 시설별
-측정 결과가 JSON 스냅샷으로 저장된다.
+현재 두 테이블 사이에 외래 키는 없다. SWMM 런타임 snapshot과 tick log는 DB가
+아니라 `swmm_engine/logs/runtime-tick-logs/*.jsonl` 파일에 기록된다.
 
 ## Facility
 
-초기화 시 전달받은 시설의 정상 기준값을 저장한다.
+클라이언트 초기화 API에서 전달받은 시설 기준값과 확장 metadata를 저장한다.
 
 | 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
 | --- | --- | --- | --- | --- |
@@ -52,34 +80,83 @@ erDiagram
 | `location` | CharField(255) | 아니요 | 빈 문자열 | 위치 설명 |
 | `normal_value` | FloatField | 아니요 | `0.0` | 정상 상태 기준값 |
 | `unit` | CharField(20) | 아니요 | 빈 문자열 | 기준값 단위 |
-| `metadata` | JSONField | 아니요 | `{}` | 임계값 등 확장 데이터 |
-| `is_active` | BooleanField | 아니요 | `true` | 시뮬레이션 포함 여부 |
+| `metadata` | JSONField | 아니요 | `{}` | SWMM ID, 임계값 등 확장 데이터 |
+| `is_active` | BooleanField | 아니요 | `true` | 활성 여부 |
 | `created_at` | DateTimeField | 아니요 | 생성 시각 | 자동 기록 |
 | `updated_at` | DateTimeField | 아니요 | 수정 시각 | 자동 갱신 |
 
-기본 조회 순서는 `id` 오름차순이다.
+허용 `facility_type` 값은 다음과 같다.
 
-## SimulationRun
+| 값 | 설명 |
+| --- | --- |
+| `DRAINAGE_PIPE` | 배수관 |
+| `CATCH_BASIN` | 빗물받이 |
+| `MANHOLE` | 맨홀 |
+| `PUMP` | 펌프 |
+| `OTHER` | 기타 |
 
-시뮬레이션 입력과 엔진 결과를 실행 단위로 저장한다.
+기본 조회 순서는 `id` 오름차순이다. 시설 삭제 API는 현재 hard delete를 수행한다.
+
+## Scenario
+
+React 편집모드에서 저장한 배수도 layout JSON을 보관한다.
 
 | 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
 | --- | --- | --- | --- | --- |
 | `id` | BigAutoField | 아니요 | 자동 증가 | PK |
-| `rainfall_status` | CharField(50) | 아니요 | 없음 | 강수 상황 |
-| `rainfall_amount` | FloatField | 아니요 | `0.0` | 강수량 |
-| `duration_minutes` | PositiveIntegerField | 아니요 | `0` | 지속 시간 |
-| `parameters` | JSONField | 아니요 | `{}` | 엔진 확장 입력 |
-| `result` | JSONField | 아니요 | `{}` | 측정값과 이상 현상 결과 |
-| `status` | CharField(20) | 아니요 | `COMPLETED` | `COMPLETED`, `FAILED` |
+| `title` | CharField(100) | 아니요 | 없음 | 시나리오 제목 |
+| `description` | TextField | 아니요 | 빈 문자열 | 시나리오 설명 |
+| `layout_json` | JSONField | 아니요 | 없음 | React editor layout JSON |
+| `version` | PositiveIntegerField | 아니요 | `1` | layout 변경 시 1 증가 |
+| `is_active` | BooleanField | 아니요 | `true` | soft delete 여부 |
 | `created_at` | DateTimeField | 아니요 | 생성 시각 | 자동 기록 |
+| `updated_at` | DateTimeField | 아니요 | 수정 시각 | 자동 갱신 |
 
-기본 조회 순서는 `created_at` 내림차순이다.
+기본 조회 순서는 `updated_at` 내림차순, `id` 내림차순이다. 삭제 API는
+`is_active=false`로 변경하는 soft delete를 수행한다.
 
 ## 마이그레이션
 
-- `apps/facilities/migrations/0001_initial.py`
-- `apps/simulation/migrations/0001_initial.py`
+현재 마이그레이션 파일은 다음과 같다.
 
-스키마 변경 시 모델 수정, `makemigrations`, `migrate`, 테스트, 본 문서 갱신을
-한 작업 단위로 처리한다.
+| 앱 | 파일 |
+| --- | --- |
+| `custom_auth` | `apps/auth/migrations/0001_initial.py` |
+| `facilities` | `apps/facilities/migrations/0001_initial.py` |
+| `scenarios` | `apps/scenarios/migrations/0001_initial.py` |
+
+`apps/simulation`에는 현재 활성 모델과 마이그레이션이 없다. 예전
+`SimulationRun` 모델은 legacy 코드에 남아 있으나 기본 앱 라우팅과 DB 설계의
+현재 기준에는 포함하지 않는다.
+
+스키마를 바꾸는 작업은 모델 수정, `makemigrations`, `migrate` 또는
+`migrate --check`, 관련 문서 갱신을 같은 작업 단위로 처리한다.
+
+## Users
+
+JWT 로그인용 커스텀 사용자 테이블이다. Django 기본 `auth_user`는 사용하지 않는다.
+
+| 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
+| --- | --- | --- | --- | --- |
+| `USER_ID` | BigAutoField | 아니요 | 자동 증가 | PK |
+| `ROLE` | CharField(20) | 아니요 | 없음 | `ADMIN`, `MEMBER` |
+| `USERNAME` | CharField(150) | 아니요 | 없음 | Unique, 로그인 ID |
+| `PASSWORD` | CharField(128) | 아니요 | 없음 | Django password hasher 결과 |
+| `REFRESH_TOKEN` | CharField(128) | 예 | `NULL` | refresh token HMAC-SHA256 hash |
+
+초기 ADMIN 계정은 management command로 생성한다.
+
+```bash
+python manage.py ensure_admin_user --username admin --password "<password>"
+```
+
+## Notifications
+
+Telegram 알림 토큰을 저장할 테이블이다. 현재 LEVEL 9에서는 CRUD와 발송 로직을
+구현하지 않고 스키마만 준비한다.
+
+| 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
+| --- | --- | --- | --- | --- |
+| `TOKEN_ID` | BigAutoField | 아니요 | 자동 증가 | PK |
+| `NAME` | CharField(150) | 아니요 | 없음 | Unique |
+| `TELEGRAM_TOKEN` | CharField(255) | 아니요 | 없음 | Telegram token |

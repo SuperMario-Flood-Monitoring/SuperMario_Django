@@ -1,111 +1,213 @@
 # 웹소켓 명세서
 
+## 문서 정보
+
+- 기준일: 2026-06-23
+- 기준 구현: `apps/simulation/routing.py`, `apps/simulation/consumers.py`, `apps/simulation/state.py`
+
 ## 연결 정보
 
-- 개발 URL: `ws://localhost:8000/api/ws/simulation/`
-- 운영 URL: `wss://{host}/api/ws/simulation/`
-- 프로토콜: JSON text frame
-- 인증: 현재 없음
-- 서버 그룹명: `simulation`
-
-## 연결 절차
-
-클라이언트가 연결하면 서버는 연결을 수락하고 다음 메시지를 즉시 보낸다.
-
-```json
-{
-  "code": 200,
-  "message": "Simulation socket connected.",
-  "status": "OK",
-  "data": null
-}
-```
+| 항목 | 값 |
+| --- | --- |
+| 개발 URL | `ws://127.0.0.1:8000/api/ws/simulation` |
+| 허용 경로 | `/api/ws/simulation`, `/api/ws/simulation/` |
+| 운영 URL | `wss://{host}/api/ws/simulation` |
+| 프로토콜 | JSON text frame |
+| 인증 | 현재 없음 |
+| Channels group | `simulation` |
 
 클라이언트가 별도 구독 메시지를 보낼 필요는 없다. 연결된 모든 클라이언트는 같은
-`simulation` 그룹에 참여한다.
+`simulation` group에 참여한다.
 
-## 시뮬레이션 단계 이벤트
+## 연결 직후 메시지
 
-PySWMM의 각 계산 간격마다 다음 이벤트를 방송한다.
+서버는 연결을 수락한 뒤 다음 중 하나를 즉시 보낸다.
+
+1. 엔진 세션에 최신 snapshot이 있으면 해당 snapshot.
+2. 최신 snapshot이 없으면 엔진 status payload.
+
+현재 구현은 공통 `{ code, message, status, data }` 래퍼를 사용하지 않고 payload를
+그대로 보낸다.
+
+### Status payload 예시
 
 ```json
 {
-  "code": 200,
-  "message": "Simulation step.",
-  "status": "OK",
-  "data": {
-    "schema_version": "2026-06-15-swmm-output-v1",
-    "event": "simulation.step",
-    "sequence": 1,
-    "simulated_at": "2026-01-01T00:00:01",
-    "generated_at": "2026-06-15T18:00:00+09:00",
-    "interval_seconds": 1,
-    "percent_complete": 10.0,
-    "rainfall": {
-      "status": "HEAVY_RAIN",
-      "intensity": 80.0,
-      "unit": "mm/hour"
-    },
-    "facilities": [],
-    "nodes": [],
-    "links": [],
-    "anomalies": []
+  "ok": true,
+  "running": false,
+  "paused": false,
+  "hasSession": false,
+  "stepIndex": 0,
+  "stepSeconds": 1,
+  "modelTime": null,
+  "control": {
+    "rainfallRatio": 0.0,
+    "rainfallPercent": 0.0,
+    "blockagesById": {},
+    "maxRainfallMmPerHour": 100.0,
+    "speedMultiplier": 1.0
+  },
+  "lastError": null,
+  "runId": null,
+  "tickLogPath": null,
+  "lastLogError": null,
+  "websocketClients": 1
+}
+```
+
+## Snapshot 이벤트
+
+`POST /api/engine/start`, `/api/engine/control`, `/api/engine/pause`,
+`/api/engine/resume`, runtime tick loop가 snapshot 또는 status를 broadcast한다.
+
+주요 snapshot type은 다음과 같다.
+
+| `type` | 발생 시점 |
+| --- | --- |
+| `started` | 엔진 시작 직후 |
+| `tick` | PySWMM step 진행 후 |
+| `control` | 제어값 변경 직후 |
+| `paused` | 일시정지 직후 |
+| `resumed` | 재개 직후 |
+
+### Snapshot 예시
+
+```json
+{
+  "type": "tick",
+  "ok": true,
+  "sourceOfTruth": "SWMM",
+  "runId": "20260623-120000-ab12cd34",
+  "tickLogPath": "C:\\path\\to\\swmm-runtime-20260623-120000-ab12cd34.jsonl",
+  "source": "react-editor-json",
+  "modelPath": "C:\\Temp\\swmm-django-runtime-...\\react_editor_runtime.inp",
+  "runtimeModelPath": "C:\\Temp\\swmm-django-runtime-...\\react_editor_runtime.runtime.inp",
+  "modelTime": "2026-06-16T00:00:01",
+  "stepSeconds": 1,
+  "stepIndex": 1,
+  "control": {
+    "rainfallRatio": 0.5,
+    "rainfallPercent": 50.0,
+    "blockagesById": {},
+    "maxRainfallMmPerHour": 100.0,
+    "speedMultiplier": 1.0
+  },
+  "nodes": {},
+  "links": {},
+  "editorObjects": {},
+  "summary": {
+    "nodeCount": 0,
+    "linkCount": 0,
+    "rainfallTargetCount": 0,
+    "blockageTargetCount": 0,
+    "activeBlockageCount": 0
+  },
+  "risk": {
+    "ok": true,
+    "highestSeverity": "NORMAL",
+    "events": [],
+    "summary": {},
+    "validation": {},
+    "counters": {},
+    "policy": {
+      "level": "balanced"
+    }
+  },
+  "llmTrigger": {
+    "shouldTrigger": false,
+    "reason": null,
+    "contextLevel": "optimal",
+    "triggeredIssues": [],
+    "newIssueCount": 0,
+    "escalatedIssueCount": 0,
+    "activeIssueCount": 0,
+    "resolvedIssues": []
   }
 }
 ```
 
-LEVEL 4 데모는 SWMM 계산 간격과 실제 방송 간격을 모두 1초로 설정한다. 각 시설은
-`water_level_percent`, `blockage_percent`, `status`, `has_failure`를 포함한다.
-상세 필드와 상태 판정은 `docs/swmm-spec.md`를 따른다.
+## Node State
 
-LEVEL 5부터 데모 실행 시간은 최대 30초이며 관로 상태에는
-`obstruction_type`이 추가된다.
+`nodes`는 SWMM node ID를 key로 하는 객체다. 주요 필드는 다음과 같다.
 
-## 시뮬레이션 최종 이벤트
+| 필드 | 단위 | 설명 |
+| --- | --- | --- |
+| `id` | - | SWMM node ID |
+| `sourceEditorId` | - | 원본 React editor 객체 ID |
+| `sourceEditorType` | - | 원본 React editor 객체 type |
+| `sourceEditorName` | - | 원본 표시 이름 |
+| `depthM` | m | 수심 |
+| `headM` | m | 수두 |
+| `invertElevationM` | m | 관저고 |
+| `maxDepthM` | m | 표시 기준 최대 수심 |
+| `hydraulicMaxDepthM` | m | SWMM 계산 기준 최대 수심 |
+| `depthRatio` | ratio | 수심 / 최대 수심 |
+| `totalInflowCms` | m3/s | 총 유입량 |
+| `floodingCms` | m3/s | 월류량 |
 
-`POST /api/engine/start`가 성공하면 서버가 모든 구독자에게 결과를 방송한다.
+## Link State
 
-```json
-{
-  "code": 200,
-  "message": "Simulation completed.",
-  "status": "OK",
-  "data": {
-    "simulation_id": 1,
-    "rainfall_status": "HEAVY_RAIN",
-    "rainfall_amount": 80.0,
-    "duration_minutes": 30,
-    "nodes": [
-      {
-        "facility_id": 1,
-        "name": "catch-basin-1",
-        "facility_type": "CATCH_BASIN",
-        "depth": 0.14426,
-        "flooding": 0.0,
-        "depth_ratio": 0.120217,
-        "is_anomaly": false
-      }
-    ],
-    "links": [],
-    "anomalies": [],
-    "has_anomaly": false,
-    "engine": "pyswmm",
-    "engine_version": "2.1.0"
-  }
-}
-```
+`links`는 SWMM link ID를 key로 하는 객체다.
+
+| 필드 | 단위 | 설명 |
+| --- | --- | --- |
+| `id` | - | SWMM link ID |
+| `sourceEditorId` | - | 원본 React editor 객체 ID |
+| `sourceEditorType` | - | 원본 React editor 객체 type |
+| `sourceEditorName` | - | 원본 표시 이름 |
+| `fromNode` | - | 시작 SWMM node |
+| `toNode` | - | 종료 SWMM node |
+| `flowCms` | m3/s | 유량 |
+| `velocityMps` | m/s | 속도 |
+| `depthM` | m | 관로 수심 |
+| `fullness` | ratio | 관로 충만도 |
+| `capacityCms` | m3/s | 추정 만관 용량 |
+| `capacityRatio` | ratio | 유량 / 용량 |
+| `targetSetting` | ratio | 제어 목표 개도 |
+| `currentSetting` | ratio | 현재 개도 |
+| `blockageRatio` | ratio | 막힘 비율 |
+| `direction` | string | `forward` 또는 `reverse` |
+
+## Editor Object State
+
+`editorObjects`는 React editor 객체 ID를 key로 한다. 하나의 editor 객체가 여러
+SWMM node/link로 변환될 수 있으므로 최대 수위, 최대 충만도, 최대 막힘 등을
+집계한다.
+
+| 필드 | 설명 |
+| --- | --- |
+| `maxDepthRatio` | 연결 node의 최대 수심 비율 |
+| `maxFullness` | 연결 link의 최대 충만도 |
+| `maxCapacityRatio` | 연결 link의 최대 용량 비율 |
+| `maxBlockageRatio` | 연결 link의 최대 막힘 비율 |
+| `maxFloodingCms` | 연결 node의 최대 월류량 |
+| `flowCms` | 연결 link 중 절댓값이 가장 큰 유량 |
+| `maxVelocityMps` | 연결 link 중 절댓값이 가장 큰 속도 |
+| `totalInflowCms` | 연결 node의 최대 유입량 |
+
+## Risk와 LLM Trigger
+
+모든 snapshot에는 `risk`와 `llmTrigger`가 포함된다.
+
+- `risk.highestSeverity`: `NORMAL`, `WATCH`, `WARNING`, `CRITICAL`
+- `risk.events`: deterministic rule로 감지한 위험 이벤트 목록
+- `risk.policy.level`: `SUPERMARIO_RISK_POLICY_LEVEL` 값, 기본 `balanced`
+- `llmTrigger.shouldTrigger`: 새 위험 이슈 또는 심각도 상승으로 LLM 분석이 필요한지 여부
+- `llmTrigger.context`: trigger가 true일 때만 포함되는 LLM 분석 context
+
+현재 dispatcher는 실제 외부 LLM HTTP 호출을 수행하지 않고 dispatch log만 남기는
+placeholder다.
 
 ## 연결 종료
 
-클라이언트 또는 서버가 연결을 종료하면 해당 채널을 `simulation` 그룹에서
-제거한다. 현재 재연결, heartbeat, 메시지 재전송은 클라이언트 책임이다.
+클라이언트 또는 서버가 연결을 종료하면 해당 channel을 `simulation` group에서
+제거하고 `websocketClients` 카운터를 감소시킨다.
+
+현재 heartbeat, 재연결, 메시지 재전송은 클라이언트 책임이다.
 
 ## 제한 사항
 
-- 클라이언트 발신 메시지는 현재 처리하지 않는다.
-- 실행 이력 재전송 기능은 없다. 누락된 최종 결과는 REST 목록 API로 확인한다.
-- In-memory Channel Layer를 사용하므로 서버 프로세스 간 방송을 공유하지 않는다.
-- 메시지 버전 필드와 이벤트 타입 필드는 아직 없다.
-
-다중 서버 운영 시 Redis Channel Layer, 인증, heartbeat, 이벤트 버전 관리 정책을
-추가해야 한다.
+- 클라이언트 발신 WebSocket 메시지는 현재 처리하지 않는다.
+- 모든 클라이언트가 하나의 전역 엔진 세션 snapshot을 공유한다.
+- In-memory Channel Layer를 사용하므로 다중 프로세스 간 broadcast를 공유하지 않는다.
+- 실행 이력 REST 재조회 API는 현재 없다. tick log는 서버 파일에만 기록된다.

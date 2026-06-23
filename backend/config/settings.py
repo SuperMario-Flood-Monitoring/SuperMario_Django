@@ -12,7 +12,10 @@ def csv_env(name: str, default: str) -> list[str]:
 
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-development-only")
+SUPERMARIO_JWT_SECRET_KEY = os.getenv("SUPERMARIO_JWT_SECRET_KEY", SECRET_KEY)
 DEBUG = os.getenv("DJANGO_DEBUG", "false" if IS_PRODUCTION else "true").lower() == "true"
+SUPERMARIO_REFRESH_COOKIE_SAMESITE = os.getenv("SUPERMARIO_REFRESH_COOKIE_SAMESITE", "Lax")
+SUPERMARIO_REFRESH_COOKIE_SECURE = os.getenv("SUPERMARIO_REFRESH_COOKIE_SECURE", "true").lower() == "true"
 
 DEFAULT_ALLOWED_HOSTS = (
     "supermario.o-r.kr,59.9.136.144,192.168.0.101,localhost,127.0.0.1"
@@ -39,6 +42,7 @@ SUPERMARIO_LLM_ANALYZE_URL = os.getenv(
 INSTALLED_APPS = [
     "daphne",
     "corsheaders",
+    "apps.auth.apps.AuthConfig",
     "apps.facilities",
     "apps.scenarios",
     "apps.simulation",
@@ -55,6 +59,7 @@ MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "apps.auth.middleware.ApiJwtAuthenticationMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
