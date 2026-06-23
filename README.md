@@ -42,7 +42,7 @@ React 시뮬레이션모드
   -> SWMM 런타임 세션 시작
   -> 백그라운드 run loop에서 1초 tick 진행
   -> 최신 snapshot 저장
-  -> WebSocket /ws/simulation 으로 snapshot broadcast
+  -> WebSocket /api/ws/simulation 으로 snapshot broadcast
 ```
 
 SWMM 계산 결과의 source of truth는 서버의 `swmm_engine`입니다. React는 강수량, 막힘, 배속 같은 제어값을 전달하고, 서버 snapshot을 화면에 렌더링합니다.
@@ -89,6 +89,22 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
+### macOS에서 PySWMM import가 `Killed: 9`로 죽는 경우
+
+macOS 로컬 가상환경에서 `swmm-toolkit`의 네이티브 라이브러리 서명/xattr이 깨지면 `from pyswmm import Simulation` 단계에서 Python 프로세스가 바로 종료될 수 있습니다. 이 경우 서버가 `/api/engine/start` 처리 중 끊기면서 브라우저에는 `Failed to fetch`처럼 보입니다.
+
+아래 복구 스크립트로 현재 `.venv` 안의 SWMM 네이티브 파일 metadata와 ad-hoc 서명을 다시 정리합니다.
+
+```bash
+bash scripts/repair-macos-swmm-toolkit.sh
+```
+
+가상환경 경로가 다르면 인자로 넘길 수 있습니다.
+
+```bash
+bash scripts/repair-macos-swmm-toolkit.sh /path/to/.venv
+```
+
 ### 4. DB 마이그레이션
 
 ```bash
@@ -110,35 +126,35 @@ http://127.0.0.1:8000/
 ### 6. 서버 상태 확인
 
 ```bash
-curl http://127.0.0.1:8000/engine/status
+curl http://127.0.0.1:8000/api/engine/status
 ```
 
 ## API
 
 ### Engine API
 
-기본 prefix는 `/engine/`입니다.
+기본 공개 prefix는 `/api/engine/`입니다.
 
 | 기능 | Method | Endpoint |
 | --- | --- | --- |
-| 헬스 체크 | GET | `/engine/health` |
-| 엔진 상태 | GET | `/engine/status` |
-| 엔진 시작 | POST | `/engine/start` |
-| 엔진 리셋 | POST | `/engine/reset` |
-| 제어값 변경 | POST | `/engine/control` |
-| 엔진 정지 | POST | `/engine/stop` |
-| 엔진 일시정지 | POST | `/engine/pause` |
-| 엔진 재개 | POST | `/engine/resume` |
+| 헬스 체크 | GET | `/api/engine/health` |
+| 엔진 상태 | GET | `/api/engine/status` |
+| 엔진 시작 | POST | `/api/engine/start` |
+| 엔진 리셋 | POST | `/api/engine/reset` |
+| 제어값 변경 | POST | `/api/engine/control` |
+| 엔진 정지 | POST | `/api/engine/stop` |
+| 엔진 일시정지 | POST | `/api/engine/pause` |
+| 엔진 재개 | POST | `/api/engine/resume` |
 
 ### Editor API
 
-기본 prefix는 `/editor/`입니다.
+기본 공개 prefix는 `/api/editor/`입니다.
 
 | 기능 | Method | Endpoint |
 | --- | --- | --- |
-| 변환 검증 | POST | `/editor/convert/validate` |
-| INP 다운로드 | POST | `/editor/export-inp` |
-| INP/report/mapping ZIP 다운로드 | POST | `/editor/convert/download` |
+| 변환 검증 | POST | `/api/editor/convert/validate` |
+| INP 다운로드 | POST | `/api/editor/export-inp` |
+| INP/report/mapping ZIP 다운로드 | POST | `/api/editor/convert/download` |
 
 ### Scenario API
 
@@ -161,10 +177,12 @@ GET /api/scenarios?includeInactive=true
 ### WebSocket
 
 ```text
-ws://127.0.0.1:8000/ws/simulation
+ws://127.0.0.1:8000/api/ws/simulation
 ```
 
 클라이언트가 연결되면 현재 엔진 snapshot이 있으면 snapshot을, 없으면 엔진 상태 payload를 즉시 전송합니다.
+
+1초 snapshot에는 `risk`와 `llmTrigger`가 optional로 포함됩니다. `risk.policy.level`은 `SUPERMARIO_RISK_POLICY_LEVEL` 값이며, 기본 `balanced`는 시작 직후 30 tick 동안 미세 역류를 안정화 구간으로 보고, 역류 유량/지속시간 기준을 만족한 뒤에만 WARNING/CRITICAL 위험으로 확정합니다. `llmTrigger.shouldTrigger`가 `true`인 snapshot은 `apps/simulation/state.py`의 `broadcast()`에서 `swmm_engine.llm_dispatcher.schedule_llm_analysis_dispatch()`로 전달됩니다. 현재 dispatcher는 실제 SuperMario_LLM HTTP 호출을 하지 않는 placeholder이며, 이후 `swmm_engine/llm_dispatcher.py`의 `dispatch_llm_analysis()` 안에 `/analyze` 호출, 기상청 데이터 결합, retry/로그 정책을 채우면 됩니다.
 
 ## 주요 요청 예시
 
@@ -231,6 +249,8 @@ SuperMario_Django/
 │   ├── swmm_engine/
 │   │   ├── converter/       # React layout -> SWMM INP 변환
 │   │   ├── engine/          # 실시간 SWMM runtime session
+│   │   ├── risk/            # snapshot 이상상황 감지와 LLM context 생성
+│   │   ├── llm_dispatcher.py # 향후 SuperMario_LLM 호출 hook
 │   │   ├── interface.py     # Django에서 호출하는 엔진 interface
 │   │   └── logs/            # runtime tick log
 │   ├── legacy/              # 팀원 테스트/레거시 코드
@@ -249,6 +269,8 @@ SuperMario_Django/
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | React 개발 서버 CORS 허용 origin |
 | `SQLITE_PATH` | `backend/db.sqlite3` | SQLite DB 파일 경로 |
 | `ENABLE_LEGACY_SIMULATION_API` | `false` | legacy simulation API 활성화 여부 |
+| `SUPERMARIO_RISK_POLICY_LEVEL` | `balanced` | 이상상황 확정 기준 레벨. `sensitive`, `balanced`, `strict` 지원 |
+| `SUPERMARIO_RISK_PAUSE_ON_TRIGGER` | `false` | 디버깅용. `true`이면 LLM trigger 발생 tick에서 엔진을 자동 일시정지 |
 
 > macOS 기본 `python3`가 3.9 계열이면 `Django==6.0.6` 설치가 실패합니다. 이 경우 Homebrew, pyenv 등으로 Python 3.12 이상을 준비한 뒤 가상환경을 생성해야 합니다.
 
@@ -260,6 +282,7 @@ SuperMario_Django/
 - React layout 객체 ID와 SWMM 변환 mapping을 임의로 분리하지 않습니다.
 - 엔진은 Django view에서 직접 계산하지 않고 `swmm_engine.interface`를 통해 실행합니다.
 - WebSocket broadcast는 Channels group event를 사용하며, `swmm.message` event는 consumer의 `swmm_message` handler로 전달됩니다.
+- LLM 서버 호출은 SWMM 엔진 내부가 아니라 `swmm_engine.llm_dispatcher.dispatch_llm_analysis()`에서 연결합니다.
 
 ## 검증 명령
 
@@ -271,7 +294,7 @@ python manage.py migrate --check
 API smoke test:
 
 ```bash
-curl http://127.0.0.1:8000/engine/status
+curl http://127.0.0.1:8000/api/engine/status
 curl http://127.0.0.1:8000/api/scenarios
 ```
 
@@ -283,4 +306,4 @@ React 클라이언트는 별도 레포에서 실행합니다.
 /Users/onseoktae/Documents/Team_Supermario/SuperMario_React
 ```
 
-React의 기본 백엔드 주소는 `http://127.0.0.1:8000`입니다.
+React local 개발 기본 백엔드 주소는 `http://127.0.0.1:8000/api`입니다.

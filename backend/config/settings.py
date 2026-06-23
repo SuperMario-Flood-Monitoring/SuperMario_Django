@@ -3,13 +3,38 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+APP_ENV = os.getenv("APP_ENV", os.getenv("DJANGO_ENV", "local")).lower()
+IS_PRODUCTION = APP_ENV in {"prod", "production"}
+
+
+def csv_env(name: str, default: str) -> list[str]:
+    return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
+
+
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-development-only")
-DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
-ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
-    if host.strip()
-]
+DEBUG = os.getenv("DJANGO_DEBUG", "false" if IS_PRODUCTION else "true").lower() == "true"
+
+DEFAULT_ALLOWED_HOSTS = (
+    "supermario.o-r.kr,59.9.136.144,192.168.0.101,localhost,127.0.0.1"
+    if IS_PRODUCTION
+    else "localhost,127.0.0.1"
+)
+ALLOWED_HOSTS = csv_env("DJANGO_ALLOWED_HOSTS", DEFAULT_ALLOWED_HOSTS)
+
+DEFAULT_PUBLIC_BASE_URL = "https://supermario.o-r.kr" if IS_PRODUCTION else "http://127.0.0.1:5173"
+SUPERMARIO_PUBLIC_BASE_URL = os.getenv("SUPERMARIO_PUBLIC_BASE_URL", DEFAULT_PUBLIC_BASE_URL).rstrip("/")
+SUPERMARIO_API_BASE_URL = os.getenv(
+    "SUPERMARIO_API_BASE_URL",
+    f"{SUPERMARIO_PUBLIC_BASE_URL}/api",
+).rstrip("/")
+SUPERMARIO_LLM_BASE_URL = os.getenv(
+    "SUPERMARIO_LLM_BASE_URL",
+    "https://supermario.o-r.kr/llm" if IS_PRODUCTION else "http://127.0.0.1:8001/llm",
+).rstrip("/")
+SUPERMARIO_LLM_ANALYZE_URL = os.getenv(
+    "SUPERMARIO_LLM_ANALYZE_URL",
+    f"{SUPERMARIO_LLM_BASE_URL}/analyze",
+)
 
 INSTALLED_APPS = [
     "daphne",
@@ -56,12 +81,26 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": os.getenv("SQLITE_PATH", BASE_DIR / "db.sqlite3"),
+DATABASE_ENGINE = os.getenv("DATABASE_ENGINE", "sqlite").lower()
+
+if DATABASE_ENGINE == "postgres":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("POSTGRES_DB", "supermario"),
+            "USER": os.getenv("POSTGRES_USER", "supermario"),
+            "PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
+            "HOST": os.getenv("POSTGRES_HOST", "postgres"),
+            "PORT": os.getenv("POSTGRES_PORT", "5432"),
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": os.getenv("SQLITE_PATH", BASE_DIR / "db.sqlite3"),
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -87,14 +126,12 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CORS_ALLOWED_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173",
-    ).split(",")
-    if origin.strip()
-]
+DEFAULT_CORS_ALLOWED_ORIGINS = (
+    "https://supermario.o-r.kr,http://supermario.o-r.kr,http://59.9.136.144,http://192.168.0.101"
+    if IS_PRODUCTION
+    else "http://localhost:5173,http://127.0.0.1:5173"
+)
+CORS_ALLOWED_ORIGINS = csv_env("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS)
 
 CHANNEL_LAYERS = {
     "default": {

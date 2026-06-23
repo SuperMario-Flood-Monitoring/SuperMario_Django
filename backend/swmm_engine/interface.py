@@ -47,6 +47,8 @@ from swmm_engine.engine import SwmmRuntimeEngine  # noqa: E402
 from swmm_engine.risk import (  # noqa: E402
     build_swmm_context_packet,
     evaluate_swmm_risk,
+    get_risk_policy,
+    normalize_risk_policy_level,
     validate_swmm_snapshot,
 )
 
@@ -137,6 +139,8 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
 def detect_risks(
     snapshot: dict[str, Any],
     previous_state: dict[str, Any] | None = None,
+    *,
+    policy_level: str | None = None,
 ) -> dict[str, Any]:
     """SWMM snapshot에서 위험 이벤트를 deterministic rule로 감지한다.
 
@@ -158,6 +162,11 @@ def detect_risks(
       이어서 계산한다.
     - 첫 tick이나 단발 분석에서는 None으로 두면 된다.
 
+    policy_level:
+    - sensitive/balanced/strict 중 하나.
+    - 레벨별로 시작 안정화 tick, 역류 최소 유량, 지속시간 기준,
+      LLM 호출 최소 severity가 달라진다.
+
     반환:
     - highestSeverity: NORMAL/WATCH/WARNING/CRITICAL 중 최고 위험도.
     - events: 위험 이벤트 목록.
@@ -166,7 +175,7 @@ def detect_risks(
     - counters: 다음 tick에 넘길 연속 발생 카운터.
     """
 
-    return evaluate_swmm_risk(snapshot, previous_state=previous_state)
+    return evaluate_swmm_risk(snapshot, previous_state=previous_state, policy_level=policy_level)
 
 
 def build_llm_context(
@@ -174,6 +183,7 @@ def build_llm_context(
     risk_result: dict[str, Any] | None = None,
     *,
     context_level: ContextLevel = "optimal",
+    policy_level: str | None = None,
     weather: dict[str, Any] | None = None,
     system_meta: dict[str, Any] | None = None,
     raw_snapshot_ref: str | None = None,
@@ -211,6 +221,7 @@ def build_llm_context(
         snapshot,
         risk_result,
         context_level=context_level,
+        policy_level=policy_level,
         weather=weather,
         system_meta=system_meta,
         raw_snapshot_ref=raw_snapshot_ref,
@@ -360,7 +371,9 @@ __all__ = [
     "convert_layout_to_inp",
     "create_engine_session",
     "detect_risks",
+    "get_risk_policy",
     "get_latest_snapshot",
+    "normalize_risk_policy_level",
     "pause_engine",
     "resume_engine",
     "start_engine",

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import tempfile
 import time
 from dataclasses import dataclass
@@ -29,6 +30,12 @@ from swmm_engine.converter import (
     render_conversion_report,
     render_inp,
     render_mapping_json,
+)
+from swmm_engine.risk import (
+    build_swmm_context_packet,
+    evaluate_swmm_risk,
+    get_risk_policy,
+    normalize_risk_policy_level,
 )
 
 from .bridge import (
@@ -51,6 +58,23 @@ DEFAULT_SPEED_MULTIPLIER = 1.0
 MAX_SPEED_MULTIPLIER = 10.0
 MAX_RAINFALL_RATIO = 1000.0
 RUNTIME_TICK_LOG_DIR = PACKAGE_DIR / "logs" / "runtime-tick-logs"
+RISK_POLICY_LEVEL = normalize_risk_policy_level(os.getenv("SUPERMARIO_RISK_POLICY_LEVEL"))
+RISK_POLICY = get_risk_policy(RISK_POLICY_LEVEL)
+RISK_ALERT_SEVERITIES = set(RISK_POLICY.get("llmAlertSeverities") or ("CRITICAL",))
+RISK_CONTEXT_LEVEL = "optimal"
+RISK_RESOLUTION_GRACE_TICKS = int(RISK_POLICY.get("resolutionGraceTicks") or 5)
+RISK_PAUSE_ON_TRIGGER = str(os.getenv("SUPERMARIO_RISK_PAUSE_ON_TRIGGER", "false")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+RISK_SEVERITY_RANK = {
+    "NORMAL": 0,
+    "WATCH": 1,
+    "WARNING": 2,
+    "CRITICAL": 3,
+}
 
 
 class SwmmRuntimeError(RuntimeError):
@@ -199,6 +223,41 @@ def link_capacity_from_mapping(link_id: str, mapping: dict[str, Any]) -> float:
     return (1.0 / roughness) * area * (hydraulic_radius ** (2.0 / 3.0)) * math.sqrt(slope)
 
 
+def risk_issue_id(event: dict[str, Any]) -> str:
+    """LLM 호출 중복 방지용 안정적인 이슈 ID를 만든다.
+
+    감지 eventType은 수위 상승 단계에 따라 바뀔 수 있으므로, 같은 시설의
+    같은 계열 이상상황은 하나의 이슈로 묶는다.
+    """
+
+    event_type = str(event.get("eventType") or "UNKNOWN")
+    source = str(event.get("source") or "unknown")
+    source_id = str(event.get("sourceId") or "unknown")
+    if "BLOCKAGE" in event_type:
+        family = "BLOCKAGE"
+    elif "REVERSE" in event_type:
+        family = "REVERSE_FLOW"
+    elif "FLOODING" in event_type:
+        family = "FLOODING"
+    elif "CAPACITY" in event_type:
+        family = "CAPACITY"
+    elif (
+        "SURCHARGE" in event_type
+        or "HIGH_FILL" in event_type
+        or "ELEVATED_FILL" in event_type
+        or "HIGH_WATER" in event_type
+        or "RISING_WATER" in event_type
+    ):
+        family = "FILL_LEVEL"
+    else:
+        family = event_type
+    return f"{family}:{source}:{source_id}"
+
+
+def risk_event_rank(event: dict[str, Any]) -> int:
+    return RISK_SEVERITY_RANK.get(str(event.get("severity") or "NORMAL"), 0)
+
+
 class RealtimeSwmmSession:
     """하나의 SWMM 모델 실행 세션.
 
@@ -222,6 +281,9 @@ class RealtimeSwmmSession:
         self.blockages_by_id: dict[str, float] = {}
         self.last_snapshot: dict[str, Any] | None = None
         self.last_log_error: str | None = None
+        self.previous_risk_result: dict[str, Any] | None = None
+        self.active_risk_issues: dict[str, dict[str, Any]] = {}
+        self.risk_clear_counts: dict[str, int] = {}
         self.run_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
         RUNTIME_TICK_LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.tick_log_path = RUNTIME_TICK_LOG_DIR / f"swmm-runtime-{self.run_id}.jsonl"
@@ -548,11 +610,176 @@ class RealtimeSwmmSession:
             }
         return editor_states
 
+    def update_risk_issue_lifecycle(self, risk_result: dict[str, Any]) -> dict[str, Any]:
+        """LLM 호출 후보를 새 이슈/심각도 상승에만 열어준다."""
+
+        raw_events = [event for event in risk_result.get("events", []) if isinstance(event, dict)]
+        alert_events = [
+            event
+            for event in raw_events
+            if str(event.get("severity") or "NORMAL") in RISK_ALERT_SEVERITIES
+        ]
+        current_events_by_issue: dict[str, dict[str, Any]] = {}
+        for event in alert_events:
+            issue_id = risk_issue_id(event)
+            previous = current_events_by_issue.get(issue_id)
+            if previous is None or risk_event_rank(event) > risk_event_rank(previous):
+                current_events_by_issue[issue_id] = event
+
+        new_issues: list[dict[str, Any]] = []
+        escalated_issues: list[dict[str, Any]] = []
+        resolved_issues: list[dict[str, Any]] = []
+
+        for issue_id, event in current_events_by_issue.items():
+            severity = str(event.get("severity") or "NORMAL")
+            existing = self.active_risk_issues.get(issue_id)
+            if existing is None:
+                issue = self._risk_issue_record(issue_id, event)
+                issue["firstSeenStepIndex"] = self.step_index
+                issue["lastTriggeredStepIndex"] = self.step_index
+                self.active_risk_issues[issue_id] = issue
+                new_issues.append(dict(issue))
+            else:
+                previous_severity = str(existing.get("severity") or "NORMAL")
+                existing.update(self._risk_issue_record(issue_id, event))
+                if RISK_SEVERITY_RANK.get(severity, 0) > RISK_SEVERITY_RANK.get(previous_severity, 0):
+                    existing["previousSeverity"] = previous_severity
+                    existing["lastTriggeredStepIndex"] = self.step_index
+                    escalated_issues.append(dict(existing))
+                else:
+                    existing.pop("previousSeverity", None)
+            self.risk_clear_counts.pop(issue_id, None)
+
+        for issue_id in list(self.active_risk_issues):
+            if issue_id in current_events_by_issue:
+                continue
+            clear_count = self.risk_clear_counts.get(issue_id, 0) + 1
+            if clear_count >= RISK_RESOLUTION_GRACE_TICKS:
+                issue = self.active_risk_issues.pop(issue_id)
+                issue["resolvedStepIndex"] = self.step_index
+                resolved_issues.append(dict(issue))
+                self.risk_clear_counts.pop(issue_id, None)
+            else:
+                self.risk_clear_counts[issue_id] = clear_count
+
+        triggered_issues = new_issues + escalated_issues
+        return {
+            "shouldTrigger": bool(triggered_issues),
+            "reason": self._risk_trigger_reason(new_issues, escalated_issues),
+            "contextLevel": RISK_CONTEXT_LEVEL,
+            "triggeredIssues": triggered_issues,
+            "newIssueCount": len(new_issues),
+            "escalatedIssueCount": len(escalated_issues),
+            "activeIssueCount": len(self.active_risk_issues),
+            "resolvedIssues": resolved_issues,
+            "suppression": {
+                "policy": "trigger_once_until_resolved_or_escalated",
+                "riskPolicyLevel": RISK_POLICY_LEVEL,
+                "alertSeverities": sorted(RISK_ALERT_SEVERITIES),
+                "resolutionGraceTicks": RISK_RESOLUTION_GRACE_TICKS,
+            },
+        }
+
+    def _risk_issue_record(self, issue_id: str, event: dict[str, Any]) -> dict[str, Any]:
+        record = {
+            "issueId": issue_id,
+            "eventId": event.get("eventId"),
+            "eventType": event.get("eventType"),
+            "severity": event.get("severity"),
+            "source": event.get("source"),
+            "sourceId": event.get("sourceId"),
+            "metrics": event.get("metrics", {}),
+            "lastSeenStepIndex": self.step_index,
+        }
+        record.update(self.risk_source_metadata(event))
+        return record
+
+    def risk_source_metadata(self, event: dict[str, Any]) -> dict[str, Any]:
+        source = str(event.get("source") or "")
+        source_id = str(event.get("sourceId") or "")
+        if source == "link":
+            link_meta = self.swmm_links.get(source_id) if isinstance(self.swmm_links, dict) else {}
+            if not isinstance(link_meta, dict):
+                link_meta = {}
+            from_node = str(link_meta.get("fromNode") or "")
+            to_node = str(link_meta.get("toNode") or "")
+            from_node_meta = self.swmm_nodes.get(from_node) if isinstance(self.swmm_nodes, dict) else {}
+            to_node_meta = self.swmm_nodes.get(to_node) if isinstance(self.swmm_nodes, dict) else {}
+            if not isinstance(from_node_meta, dict):
+                from_node_meta = {}
+            if not isinstance(to_node_meta, dict):
+                to_node_meta = {}
+            return {
+                "displayName": link_meta.get("sourceEditorName") or source_id,
+                "sourceEditorId": link_meta.get("sourceEditorId"),
+                "sourceEditorType": link_meta.get("sourceEditorType"),
+                "sourceEditorName": link_meta.get("sourceEditorName"),
+                "pipeKind": link_meta.get("pipeKind"),
+                "fromNode": from_node or None,
+                "toNode": to_node or None,
+                "fromNodeName": from_node_meta.get("sourceEditorName") or from_node or None,
+                "toNodeName": to_node_meta.get("sourceEditorName") or to_node or None,
+                "lengthM": link_meta.get("length"),
+            }
+        if source == "node":
+            node_meta = self.swmm_nodes.get(source_id) if isinstance(self.swmm_nodes, dict) else {}
+            if not isinstance(node_meta, dict):
+                node_meta = {}
+            return {
+                "displayName": node_meta.get("sourceEditorName") or source_id,
+                "sourceEditorId": node_meta.get("sourceEditorId"),
+                "sourceEditorType": node_meta.get("sourceEditorType"),
+                "sourceEditorName": node_meta.get("sourceEditorName"),
+            }
+        return {"displayName": source_id}
+
+    def _risk_trigger_reason(self, new_issues: list[dict[str, Any]], escalated_issues: list[dict[str, Any]]) -> str | None:
+        if new_issues and escalated_issues:
+            return "new_issue_and_severity_escalation"
+        if new_issues:
+            return "new_issue"
+        if escalated_issues:
+            return "severity_escalation"
+        return None
+
+    def attach_risk_payload(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        risk_result = evaluate_swmm_risk(
+            snapshot,
+            previous_state=self.previous_risk_result,
+            policy_level=RISK_POLICY_LEVEL,
+        )
+        trigger = self.update_risk_issue_lifecycle(risk_result)
+        snapshot["risk"] = {
+            "ok": risk_result.get("ok", False),
+            "highestSeverity": risk_result.get("highestSeverity", "NORMAL"),
+            "events": risk_result.get("events", []),
+            "summary": risk_result.get("summary", {}),
+            "validation": risk_result.get("validation", {}),
+            "counters": risk_result.get("counters", {}),
+            "policy": risk_result.get("policy", RISK_POLICY),
+        }
+        if trigger["shouldTrigger"]:
+            trigger["context"] = build_swmm_context_packet(
+                snapshot,
+                risk_result,
+                context_level=RISK_CONTEXT_LEVEL,
+                policy_level=RISK_POLICY_LEVEL,
+                system_meta={
+                    "sourceService": "SuperMario_Django",
+                    "targetService": "SuperMario_LLM",
+                    "dispatchStatus": "not_called",
+                },
+                raw_snapshot_ref=str(self.tick_log_path),
+            )
+        snapshot["llmTrigger"] = trigger
+        self.previous_risk_result = risk_result
+        return snapshot
+
     def collect_snapshot(self, event_type: str = "snapshot") -> dict[str, Any]:
         node_states = self.collect_node_states()
         link_states = self.collect_link_states()
         editor_states = self.aggregate_editor_states(node_states, link_states)
-        return {
+        snapshot = {
             "type": event_type,
             "ok": True,
             "sourceOfTruth": "SWMM",
@@ -576,6 +803,7 @@ class RealtimeSwmmSession:
                 "activeBlockageCount": sum(1 for value in self.blockages_by_id.values() if value > 0),
             },
         }
+        return self.attach_risk_payload(snapshot)
 
     def model_time_iso(self) -> str | None:
         try:
@@ -752,6 +980,21 @@ class SwmmRuntimeEngine:
             if self.session is None:
                 return
             self.session.last_snapshot = snapshot
+            trigger = snapshot.get("llmTrigger") if isinstance(snapshot, dict) else None
+            if RISK_PAUSE_ON_TRIGGER and isinstance(trigger, dict) and trigger.get("shouldTrigger"):
+                snapshot["debugPause"] = {
+                    "reason": "risk_trigger",
+                    "enabledBy": "SUPERMARIO_RISK_PAUSE_ON_TRIGGER",
+                    "stepIndex": snapshot.get("stepIndex"),
+                    "triggeredIssues": trigger.get("triggeredIssues", []),
+                }
+                self.paused = True
+                if self.session is not None:
+                    self.session.append_runtime_event("risk_debug_paused", {
+                        "message": "Paused automatically after risk trigger.",
+                        "triggeredIssues": trigger.get("triggeredIssues", []),
+                    })
+                return
             elapsed = time.monotonic() - started_at
             step_delay = self.session.step_seconds / max(DEFAULT_SPEED_MULTIPLIER, self.session.speed_multiplier)
             await asyncio.sleep(max(0.0, step_delay - elapsed))

@@ -2,8 +2,8 @@
 
 ## 연결 정보
 
-- 개발 URL: `ws://localhost:8000/ws/simulation/`
-- 운영 URL: `wss://{host}/ws/simulation/`
+- 개발 URL: `ws://localhost:8000/api/ws/simulation/`
+- 운영 URL: `wss://{host}/api/ws/simulation/`
 - 프로토콜: JSON text frame
 - 인증: 현재 없음
 - 서버 그룹명: `simulation`
@@ -63,7 +63,7 @@ LEVEL 5부터 데모 실행 시간은 최대 30초이며 관로 상태에는
 
 ## 시뮬레이션 최종 이벤트
 
-`POST /api/simulations/`가 성공하면 서버가 모든 구독자에게 결과를 방송한다.
+`POST /api/engine/start`가 성공하면 서버가 모든 구독자에게 결과를 방송한다.
 
 ```json
 {

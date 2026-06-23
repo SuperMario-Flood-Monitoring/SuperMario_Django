@@ -6,6 +6,7 @@ from django.http import HttpRequest
 from ninja import NinjaAPI
 
 from swmm_engine.engine.runtime_engine import SwmmRuntimeError
+from swmm_engine.engine.bridge import PySwmmUnavailable
 from swmm_engine.interface import (
     apply_controls,
     pause_engine,
@@ -46,6 +47,11 @@ def swmm_runtime_error(request: HttpRequest, exc: SwmmRuntimeError):
 @engine_api.exception_handler(ValueError)
 def value_error(request: HttpRequest, exc: ValueError):
     return engine_api.create_response(request, error_payload(str(exc)), status=400)
+
+
+@engine_api.exception_handler(PySwmmUnavailable)
+def pyswmm_unavailable(request: HttpRequest, exc: PySwmmUnavailable):
+    return engine_api.create_response(request, error_payload(str(exc)), status=503)
 
 
 @engine_api.get("/health", response=HealthResponse)
