@@ -9,6 +9,7 @@ services:
       DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,172.30.1.51"
       SQLITE_PATH: "/data/db.sqlite3"
       CORS_ALLOWED_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173,http://172.30.1.51:5173"
+      CORS_ALLOW_CREDENTIALS: "true"
       SUPERMARIO_PUBLIC_BASE_URL: "http://127.0.0.1:5173"
       SUPERMARIO_API_BASE_URL: "http://127.0.0.1:8000/api"
       SUPERMARIO_LLM_BASE_URL: "http://127.0.0.1:8001/llm"
