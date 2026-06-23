@@ -1,12 +1,24 @@
 import json
 
+from django.contrib.auth.hashers import make_password
 from django.test import TestCase
 from django.urls import reverse
+
+from apps.auth.models import User
+from apps.auth.tokens import issue_token
 
 from .models import Facility
 
 
 class FacilitiesViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create(
+            username="admin",
+            role=User.Role.ADMIN,
+            password=make_password("password"),
+        )
+        self.auth_header = f"Bearer {issue_token(self.user, 'access')}"
+
     def test_initializes_multiple_facilities(self):
         response = self.client.post(
             reverse("facilities:list-create"),
@@ -29,6 +41,7 @@ class FacilitiesViewTests(TestCase):
                 }
             ),
             content_type="application/json",
+            HTTP_AUTHORIZATION=self.auth_header,
         )
 
         self.assertEqual(response.status_code, 200)
@@ -48,6 +61,7 @@ class FacilitiesViewTests(TestCase):
                 }
             ),
             content_type="application/json",
+            HTTP_AUTHORIZATION=self.auth_header,
         )
 
         self.assertEqual(response.status_code, 200)
@@ -59,6 +73,7 @@ class FacilitiesViewTests(TestCase):
             reverse("facilities:list-create"),
             data=json.dumps({"name": "unknown", "facility_type": "INVALID"}),
             content_type="application/json",
+            HTTP_AUTHORIZATION=self.auth_header,
         )
 
         self.assertEqual(response.status_code, 400)

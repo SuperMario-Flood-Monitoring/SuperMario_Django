@@ -20,6 +20,7 @@ from django.contrib import admin
 from django.urls import path, include
 
 urlpatterns = [
+    path('api/auth/', include("apps.auth.urls")),
     path('api/', include("apps.simulation.urls")),
     path('api/', include("apps.scenarios.urls")),
     path('api/facilities/', include("apps.facilities.urls")),
