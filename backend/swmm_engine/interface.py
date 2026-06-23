@@ -184,9 +184,9 @@ def build_llm_context(
     *,
     context_level: ContextLevel = "optimal",
     policy_level: str | None = None,
-    weather: dict[str, Any] | None = None,
     system_meta: dict[str, Any] | None = None,
     raw_snapshot_ref: str | None = None,
+    include_debug_refs: bool = False,
 ) -> dict[str, Any]:
     """LLM/LangChain 서버로 넘길 SWMM 분석 context를 만든다.
 
@@ -197,17 +197,13 @@ def build_llm_context(
     중요한 원칙:
     - LLM이 수치 기반 위험 판정을 새로 하게 만들지 않는다.
     - 위험 판정은 detect_risks가 deterministic하게 끝낸다.
-    - LLM에는 위험 이벤트, 관련 객체, 전체 상태 요약, 날씨/강수량,
-      시스템 프롬프트에 필요한 context만 넘긴다.
+    - LLM에는 위험 이벤트, 관련 객체, 전체 상태 요약, 시스템 프롬프트에
+      필요한 context만 넘긴다.
 
     context_level:
     - optimal: 운영 알림용. 위험 이벤트와 요약 중심이라 가장 작다.
     - medium: 분석용 기본값. 주요 비정상 객체와 관련 상태를 포함한다.
     - full: 디버깅용. raw nodes/links/editorObjects까지 포함한다.
-
-    weather:
-    - 외부 날씨 API나 현재 강수량 설정값을 넣는 곳.
-    - 예: {"rainfallMmPerHour": 80, "source": "KMA"}.
 
     system_meta:
     - 서비스명, 사용자/현장 ID, 모델 ID, 알림 정책 등 앱 레벨 metadata.
@@ -215,6 +211,11 @@ def build_llm_context(
     raw_snapshot_ref:
     - tick log 파일 경로, DB row id, object storage key처럼 raw snapshot을
       나중에 다시 찾을 수 있는 참조값.
+
+    include_debug_refs:
+    - True일 때만 modelPath, runtimeModelPath, tickLogPath, rawSnapshotRef
+      같은 디버그 참조를 포함한다. LLM 전송 payload에서는 기본값 False를
+      유지한다.
     """
 
     return build_swmm_context_packet(
@@ -222,9 +223,9 @@ def build_llm_context(
         risk_result,
         context_level=context_level,
         policy_level=policy_level,
-        weather=weather,
         system_meta=system_meta,
         raw_snapshot_ref=raw_snapshot_ref,
+        include_debug_refs=include_debug_refs,
     )
 
 

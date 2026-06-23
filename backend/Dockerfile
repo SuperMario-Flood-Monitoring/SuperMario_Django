@@ -2,6 +2,7 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    DATABASE_ENGINE=sqlite \
     SQLITE_PATH=/data/db.sqlite3
 
 WORKDIR /app

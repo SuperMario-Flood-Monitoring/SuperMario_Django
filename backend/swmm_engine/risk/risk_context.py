@@ -492,9 +492,9 @@ def build_swmm_context_packet(
     *,
     context_level: ContextLevel = "optimal",
     policy_level: str | None = None,
-    weather: Mapping[str, Any] | None = None,
     system_meta: Mapping[str, Any] | None = None,
     raw_snapshot_ref: str | None = None,
+    include_debug_refs: bool = False,
 ) -> dict[str, Any]:
     """Build a size-tiered packet for an LLM or external analysis service."""
 
@@ -509,8 +509,7 @@ def build_swmm_context_packet(
     packet: dict[str, Any] = {
         "schemaVersion": 1,
         "contextLevel": context_level,
-        "simulation": _simulation_meta(snapshot, raw_snapshot_ref),
-        "weather": dict(weather or {}),
+        "simulation": _simulation_meta(snapshot, raw_snapshot_ref, include_debug_refs=include_debug_refs),
         "systemMeta": dict(system_meta or {}),
         "riskPolicy": _public_risk_policy(policy),
         "riskSummary": risk.get("summary", {}),
@@ -534,11 +533,29 @@ def build_swmm_context_packet(
             "control": deepcopy(snapshot.get("control")),
         }
 
-    return packet
+    return _drop_empty_values(packet)
 
 
 def _mapping_or_empty(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _drop_empty_values(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        compact: dict[str, Any] = {}
+        for key, entry_value in value.items():
+            cleaned = _drop_empty_values(entry_value)
+            if cleaned in ({}, [], None):
+                continue
+            compact[str(key)] = cleaned
+        return compact
+    if isinstance(value, list):
+        return [
+            cleaned
+            for entry in value
+            if (cleaned := _drop_empty_values(entry)) not in ({}, [], None)
+        ]
+    return value
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -679,19 +696,20 @@ def _risk_summary(snapshot: Mapping[str, Any], events: list[Mapping[str, Any]]) 
     }
 
 
-def _simulation_meta(snapshot: Mapping[str, Any], raw_snapshot_ref: str | None) -> dict[str, Any]:
+def _simulation_meta(
+    snapshot: Mapping[str, Any],
+    raw_snapshot_ref: str | None,
+    *,
+    include_debug_refs: bool,
+) -> dict[str, Any]:
     control = _mapping_or_empty(snapshot.get("control"))
-    return {
+    meta = {
         "runId": snapshot.get("runId"),
         "stepIndex": snapshot.get("stepIndex"),
         "modelTime": snapshot.get("modelTime"),
         "stepSeconds": snapshot.get("stepSeconds"),
         "sourceOfTruth": snapshot.get("sourceOfTruth"),
         "source": snapshot.get("source"),
-        "modelPath": snapshot.get("modelPath"),
-        "runtimeModelPath": snapshot.get("runtimeModelPath"),
-        "tickLogPath": snapshot.get("tickLogPath"),
-        "rawSnapshotRef": raw_snapshot_ref or snapshot.get("tickLogPath"),
         "control": {
             "rainfallRatio": control.get("rainfallRatio"),
             "rainfallPercent": control.get("rainfallPercent"),
@@ -700,6 +718,14 @@ def _simulation_meta(snapshot: Mapping[str, Any], raw_snapshot_ref: str | None) 
             "activeBlockageCount": len(_mapping_or_empty(control.get("blockagesById"))),
         },
     }
+    if include_debug_refs:
+        meta.update({
+            "modelPath": snapshot.get("modelPath"),
+            "runtimeModelPath": snapshot.get("runtimeModelPath"),
+            "tickLogPath": snapshot.get("tickLogPath"),
+            "rawSnapshotRef": raw_snapshot_ref or snapshot.get("tickLogPath"),
+        })
+    return meta
 
 
 def _global_state_summary(snapshot: Mapping[str, Any], policy: Mapping[str, Any]) -> dict[str, Any]:

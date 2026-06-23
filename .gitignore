@@ -55,6 +55,8 @@ media/
 *.hst
 *.hotstart
 backend/swmm_engine/logs/runtime-tick-logs/*.jsonl
+backend/swmm_engine/logs/risk-context-exports/
+backend/swmm_engine/logs/llm-dispatch.jsonl
 _trial_temp/
 tmp/
 temp/

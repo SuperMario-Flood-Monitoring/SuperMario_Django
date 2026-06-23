@@ -15,8 +15,8 @@ flowchart LR
     Client[Vite + React Client]
     API[Django Class-Based Views]
     WS[Django Channels Consumer]
-    FacilityDB[(SQLite Facility)]
-    RunDB[(SQLite SimulationRun)]
+    FacilityDB[(Django ORM Facility)]
+    RunDB[(Django ORM SimulationRun)]
     Engine[SWMM Engine Interface]
     PySWMM[PySWMM 2.1.0]
     INP[Generated SWMM INP]
@@ -96,7 +96,7 @@ flowchart LR
 ## 배포 구조
 
 Daphne가 ASGI 애플리케이션을 실행하며 HTTP와 WebSocket을 모두 처리한다.
-Docker Compose는 SQLite 파일을 `sqlite_data` 볼륨에 보존한다.
+Docker Compose는 PostgreSQL을 함께 실행하고 `postgres_data` 볼륨에 DB 데이터를 보존한다. Python 단독 실행은 별도 DB 환경변수가 없으면 SQLite fallback을 사용한다.
 
 현재 채널 계층은 프로세스 메모리 기반이므로 단일 프로세스용이다. 다중 인스턴스
 배포 전에는 Redis 기반 Channel Layer로 교체해야 한다.

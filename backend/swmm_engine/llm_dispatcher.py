@@ -22,6 +22,25 @@ logger = logging.getLogger(__name__)
 PACKAGE_DIR = Path(__file__).resolve().parent
 LLM_DISPATCH_LOG_PATH = PACKAGE_DIR / "logs" / "llm-dispatch.jsonl"
 MAX_REMEMBERED_DISPATCH_KEYS = 1000
+LLM_CONTEXT_OMIT_KEYS = {
+    "bytes",
+    "contextExports",
+    "directory",
+    "enabledBy",
+    "exportContextLevel",
+    "exportedAt",
+    "exportKey",
+    "exportPurpose",
+    "files",
+    "manifestBytes",
+    "manifestPath",
+    "modelPath",
+    "path",
+    "rawSnapshotRef",
+    "runtimeModelPath",
+    "tickLogPath",
+    "weather",
+}
 _scheduled_dispatch_keys: set[str] = set()
 _scheduled_dispatch_key_order: deque[str] = deque()
 
@@ -46,12 +65,13 @@ def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
     if not isinstance(context, Mapping):
         logger.warning("LLM trigger was set but context payload is missing.")
         return False
+    sanitized_context = sanitize_llm_context(context)
 
     dispatch_key = build_llm_dispatch_key(payload, trigger)
     if not remember_dispatch_key(dispatch_key):
         return False
 
-    append_llm_dispatch_log(payload, trigger, context, dispatch_key)
+    append_llm_dispatch_log(payload, trigger, sanitized_context, dispatch_key)
     logger.warning(
         "LLM would-dispatch. dispatchKey=%s runId=%s stepIndex=%s reason=%s issues=%s",
         dispatch_key,
@@ -60,7 +80,7 @@ def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
         trigger.get("reason"),
         summarize_triggered_issues(trigger),
     )
-    asyncio.create_task(dispatch_llm_analysis(payload, trigger, context, dispatch_key))
+    asyncio.create_task(dispatch_llm_analysis(payload, trigger, sanitized_context, dispatch_key))
     return True
 
 
@@ -73,10 +93,8 @@ async def dispatch_llm_analysis(
     """Future SuperMario_LLM API call location.
 
     실제 연결 시 이 함수 안에서 아래 순서로 처리하면 된다.
-    1. 필요한 경우 여기서 기상청 최신 데이터를 조회한다.
-    2. `context`에 기상청 데이터와 시스템 메타를 합친다.
-    3. SuperMario_LLM `/analyze` 같은 endpoint로 POST한다.
-    4. 실패하면 logger/DB/job retry 정책으로 남긴다.
+    1. `context`를 SuperMario_LLM `/analyze` 같은 endpoint로 POST한다.
+    2. 실패하면 logger/DB/job retry 정책으로 남긴다.
 
     예시:
 
@@ -104,6 +122,28 @@ async def dispatch_llm_analysis(
     }
 
 
+def sanitize_llm_context(value: Any) -> Any:
+    """Return a copy of LLM context without local paths or debug export metadata."""
+
+    if isinstance(value, Mapping):
+        sanitized = {}
+        for key, entry_value in value.items():
+            if str(key) in LLM_CONTEXT_OMIT_KEYS:
+                continue
+            cleaned = sanitize_llm_context(entry_value)
+            if cleaned in ({}, [], None):
+                continue
+            sanitized[str(key)] = cleaned
+        return sanitized
+    if isinstance(value, list):
+        return [
+            cleaned
+            for entry in value
+            if (cleaned := sanitize_llm_context(entry)) not in ({}, [], None)
+        ]
+    return value
+
+
 def append_llm_dispatch_log(
     payload: Mapping[str, Any],
     trigger: Mapping[str, Any],
@@ -125,6 +165,7 @@ def append_llm_dispatch_log(
             "contextLevel": trigger.get("contextLevel"),
             "highestSeverity": context.get("highestSeverity"),
             "riskEventCount": len(context.get("riskEvents") or []),
+            "contextSanitized": True,
             "triggeredIssues": summarize_triggered_issues(trigger),
         }
         with LLM_DISPATCH_LOG_PATH.open("a", encoding="utf-8") as log_file:

@@ -58,17 +58,41 @@ DEFAULT_SPEED_MULTIPLIER = 1.0
 MAX_SPEED_MULTIPLIER = 10.0
 MAX_RAINFALL_RATIO = 1000.0
 RUNTIME_TICK_LOG_DIR = PACKAGE_DIR / "logs" / "runtime-tick-logs"
+RISK_CONTEXT_LEVELS = ("optimal", "medium", "full")
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_path(name: str, default: Path) -> Path:
+    raw_value = os.getenv(name)
+    if not raw_value:
+        return default
+    return Path(raw_value).expanduser()
+
+
+def normalize_context_level(value: str | None, default: str = "optimal") -> str:
+    level = str(value or default).strip().lower()
+    if level not in RISK_CONTEXT_LEVELS:
+        return default
+    return level
+
+
 RISK_POLICY_LEVEL = normalize_risk_policy_level(os.getenv("SUPERMARIO_RISK_POLICY_LEVEL"))
 RISK_POLICY = get_risk_policy(RISK_POLICY_LEVEL)
 RISK_ALERT_SEVERITIES = set(RISK_POLICY.get("llmAlertSeverities") or ("CRITICAL",))
-RISK_CONTEXT_LEVEL = "optimal"
+RISK_CONTEXT_LEVEL = normalize_context_level(os.getenv("SUPERMARIO_RISK_CONTEXT_LEVEL"))
+RISK_CONTEXT_EXPORT_DIR = env_path(
+    "SUPERMARIO_RISK_CONTEXT_EXPORT_DIR",
+    PACKAGE_DIR / "logs" / "risk-context-exports",
+)
+RISK_EXPORT_CONTEXT_ON_TRIGGER = env_flag("SUPERMARIO_RISK_EXPORT_CONTEXT_ON_TRIGGER")
 RISK_RESOLUTION_GRACE_TICKS = int(RISK_POLICY.get("resolutionGraceTicks") or 5)
-RISK_PAUSE_ON_TRIGGER = str(os.getenv("SUPERMARIO_RISK_PAUSE_ON_TRIGGER", "false")).strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+RISK_PAUSE_ON_TRIGGER = env_flag("SUPERMARIO_RISK_PAUSE_ON_TRIGGER")
 RISK_SEVERITY_RANK = {
     "NORMAL": 0,
     "WATCH": 1,
@@ -258,6 +282,25 @@ def risk_event_rank(event: dict[str, Any]) -> int:
     return RISK_SEVERITY_RANK.get(str(event.get("severity") or "NORMAL"), 0)
 
 
+def safe_file_segment(value: Any, default: str = "risk-trigger") -> str:
+    raw_segment = str(value or default).strip().lower()
+    safe_chars = []
+    for char in raw_segment:
+        if char.isascii() and (char.isalnum() or char in {"-", "_"}):
+            safe_chars.append(char)
+        else:
+            safe_chars.append("-")
+    segment = "".join(safe_chars).strip("-_")
+    while "--" in segment:
+        segment = segment.replace("--", "-")
+    return segment[:80] or default
+
+
+def write_pretty_json(path: Path, payload: dict[str, Any]) -> int:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path.stat().st_size
+
+
 class RealtimeSwmmSession:
     """하나의 SWMM 모델 실행 세션.
 
@@ -284,6 +327,7 @@ class RealtimeSwmmSession:
         self.previous_risk_result: dict[str, Any] | None = None
         self.active_risk_issues: dict[str, dict[str, Any]] = {}
         self.risk_clear_counts: dict[str, int] = {}
+        self.exported_risk_context_keys: set[str] = set()
         self.run_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
         RUNTIME_TICK_LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.tick_log_path = RUNTIME_TICK_LOG_DIR / f"swmm-runtime-{self.run_id}.jsonl"
@@ -742,6 +786,112 @@ class RealtimeSwmmSession:
             return "severity_escalation"
         return None
 
+    def risk_context_export_key(self, trigger: dict[str, Any]) -> str:
+        issue_parts = []
+        for issue in trigger.get("triggeredIssues") or []:
+            if not isinstance(issue, dict):
+                continue
+            issue_parts.append(
+                ":".join(
+                    [
+                        str(issue.get("issueId") or "unknown_issue"),
+                        str(issue.get("severity") or "NORMAL"),
+                        str(issue.get("lastTriggeredStepIndex") or self.step_index),
+                    ]
+                )
+            )
+        issue_key = "|".join(sorted(issue_parts)) or str(trigger.get("reason") or "unknown_trigger")
+        return ":".join([self.run_id, str(self.step_index), issue_key])
+
+    def export_risk_context_levels(
+        self,
+        snapshot: dict[str, Any],
+        risk_result: dict[str, Any],
+        trigger: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not RISK_EXPORT_CONTEXT_ON_TRIGGER or not trigger.get("shouldTrigger"):
+            return None
+
+        export_key = self.risk_context_export_key(trigger)
+        if export_key in self.exported_risk_context_keys:
+            return None
+        self.exported_risk_context_keys.add(export_key)
+
+        first_issue = next(
+            (issue for issue in trigger.get("triggeredIssues") or [] if isinstance(issue, dict)),
+            {},
+        )
+        reason_segment = safe_file_segment(trigger.get("reason") or first_issue.get("eventType"))
+        step_segment = f"step-{self.step_index:06d}-{reason_segment}"
+        export_dir = RISK_CONTEXT_EXPORT_DIR / self.run_id / step_segment
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        exported_at = datetime.now().isoformat(timespec="milliseconds")
+        system_meta = {
+            "sourceService": "SuperMario_Django",
+            "targetService": "SuperMario_LLM",
+            "dispatchStatus": "not_called",
+        }
+        files: dict[str, Any] = {}
+        for level in RISK_CONTEXT_LEVELS:
+            context_packet = build_swmm_context_packet(
+                snapshot,
+                risk_result,
+                context_level=level,
+                policy_level=RISK_POLICY_LEVEL,
+                system_meta=system_meta,
+                raw_snapshot_ref=str(self.tick_log_path),
+            )
+            context_path = export_dir / f"context-{level}.json"
+            files[level] = {
+                "path": str(context_path),
+                "bytes": write_pretty_json(context_path, context_packet),
+            }
+
+        snapshot_path = export_dir / "websocket-payload.json"
+        manifest_path = export_dir / "manifest.json"
+        websocket_payload_file = {
+            "path": str(snapshot_path),
+            "bytes": 0,
+        }
+        export_info = {
+            "enabledBy": "SUPERMARIO_RISK_EXPORT_CONTEXT_ON_TRIGGER",
+            "exportKey": export_key,
+            "directory": str(export_dir),
+            "manifestPath": str(manifest_path),
+            "manifestBytes": 0,
+            "levels": list(RISK_CONTEXT_LEVELS),
+            "files": {
+                **files,
+                "websocketPayload": websocket_payload_file,
+            },
+        }
+        trigger["contextExports"] = export_info
+        snapshot_bytes = write_pretty_json(snapshot_path, snapshot)
+        websocket_payload_file["bytes"] = snapshot_bytes
+        manifest = {
+            "schemaVersion": 1,
+            "exportedAt": exported_at,
+            "exportKey": export_key,
+            "runId": self.run_id,
+            "stepIndex": self.step_index,
+            "modelTime": snapshot.get("modelTime"),
+            "reason": trigger.get("reason"),
+            "riskPolicyLevel": RISK_POLICY_LEVEL,
+            "attachedContextLevel": RISK_CONTEXT_LEVEL,
+            "exportedContextLevels": list(RISK_CONTEXT_LEVELS),
+            "tickLogPath": str(self.tick_log_path),
+            "triggeredIssues": trigger.get("triggeredIssues", []),
+            "files": export_info["files"],
+        }
+        manifest_bytes = write_pretty_json(manifest_path, manifest)
+        export_info["manifestBytes"] = manifest_bytes
+        self.append_runtime_event("risk_context_exported", {
+            "message": "Risk context files were exported for team debugging.",
+            "export": export_info,
+        })
+        return export_info
+
     def attach_risk_payload(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         risk_result = evaluate_swmm_risk(
             snapshot,
@@ -772,6 +922,9 @@ class RealtimeSwmmSession:
                 raw_snapshot_ref=str(self.tick_log_path),
             )
         snapshot["llmTrigger"] = trigger
+        export_info = self.export_risk_context_levels(snapshot, risk_result, trigger)
+        if export_info is not None:
+            trigger["contextExports"] = export_info
         self.previous_risk_result = risk_result
         return snapshot
 

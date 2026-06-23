@@ -2,10 +2,10 @@
 
 ## 개요
 
-- DBMS: SQLite
+- DBMS: PostgreSQL for Docker/production, SQLite fallback for bare local Python
 - Django ORM: Django 6.0.6
-- 개발 DB: `db.sqlite3`
-- Docker DB: `/data/db.sqlite3`
+- Python 단독 실행 기본 DB: `db.sqlite3`
+- Docker/production DB: PostgreSQL `postgres_data` volume
 - 시간대: `Asia/Seoul`
 
 ## ERD

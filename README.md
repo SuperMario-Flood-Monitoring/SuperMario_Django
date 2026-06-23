@@ -2,7 +2,7 @@
 
 도시 배수도 시나리오를 저장하고, React 클라이언트에서 전달한 배수도 JSON을 SWMM 런타임으로 실행하기 위한 Django 백엔드입니다.
 
-이 레포는 **백엔드 서버**입니다. React 작업장에서 생성한 시나리오를 SQLite DB에 저장하고, Django Ninja API와 WebSocket을 통해 SWMM 엔진 상태와 1초 tick snapshot을 프론트엔드로 전달합니다.
+이 레포는 **백엔드 서버**입니다. React 작업장에서 생성한 시나리오를 DB에 저장하고, Django Ninja API와 WebSocket을 통해 SWMM 엔진 상태와 1초 tick snapshot을 프론트엔드로 전달합니다. 로컬 Docker와 운영 배포는 PostgreSQL을 사용하고, Python 단독 실행은 별도 환경변수가 없으면 SQLite fallback으로 동작합니다.
 
 ## 핵심 기능
 
@@ -54,7 +54,7 @@ SWMM 계산 결과의 source of truth는 서버의 `swmm_engine`입니다. React
 | Framework | Django 6 |
 | API | Django Ninja |
 | Realtime | Django Channels, Daphne |
-| Database | SQLite |
+| Database | PostgreSQL, SQLite fallback |
 | SWMM Runtime | PySWMM |
 | CORS | django-cors-headers |
 
@@ -105,13 +105,45 @@ bash scripts/repair-macos-swmm-toolkit.sh
 bash scripts/repair-macos-swmm-toolkit.sh /path/to/.venv
 ```
 
-### 4. DB 마이그레이션
+### 4. 로컬 Docker Compose로 실행
+
+로컬에서 Docker를 사용할 경우 backend와 PostgreSQL을 함께 실행합니다. `docker-compose.yml`은 `postgres:16-alpine` 이미지를 자동으로 pull하고, DB healthcheck가 통과한 뒤 Django가 `migrate` 후 Daphne을 시작합니다.
+
+```bash
+docker compose up --build
+```
+
+구형 환경에서는 다음 명령을 사용할 수 있습니다.
+
+```bash
+docker-compose up --build
+```
+
+로컬 Docker 기본 DB 접속값:
+
+```text
+host: 127.0.0.1
+port: 5432
+database: supermario
+user: supermario
+password: supermario_local_password
+```
+
+호스트의 5432 포트가 이미 사용 중이면 `POSTGRES_HOST_PORT`를 바꿔 실행합니다.
+
+```bash
+POSTGRES_HOST_PORT=15432 docker compose up --build
+```
+
+### 5. Python 단독 실행 시 DB 마이그레이션
 
 ```bash
 python manage.py migrate
 ```
 
-### 5. Django 개발 서버 실행
+Python 단독 실행은 환경변수가 없으면 `backend/db.sqlite3`를 사용합니다. 단독 실행에서도 PostgreSQL을 쓰려면 `DATABASE_ENGINE=postgres`와 `POSTGRES_*` 환경변수를 먼저 지정하세요.
+
+### 6. Django 개발 서버 실행
 
 ```bash
 python manage.py runserver 127.0.0.1:8000
@@ -123,7 +155,7 @@ python manage.py runserver 127.0.0.1:8000
 http://127.0.0.1:8000/
 ```
 
-### 6. 서버 상태 확인
+### 7. 서버 상태 확인
 
 ```bash
 curl http://127.0.0.1:8000/api/engine/status
@@ -182,7 +214,31 @@ ws://127.0.0.1:8000/api/ws/simulation
 
 클라이언트가 연결되면 현재 엔진 snapshot이 있으면 snapshot을, 없으면 엔진 상태 payload를 즉시 전송합니다.
 
-1초 snapshot에는 `risk`와 `llmTrigger`가 optional로 포함됩니다. `risk.policy.level`은 `SUPERMARIO_RISK_POLICY_LEVEL` 값이며, 기본 `balanced`는 시작 직후 30 tick 동안 미세 역류를 안정화 구간으로 보고, 역류 유량/지속시간 기준을 만족한 뒤에만 WARNING/CRITICAL 위험으로 확정합니다. `llmTrigger.shouldTrigger`가 `true`인 snapshot은 `apps/simulation/state.py`의 `broadcast()`에서 `swmm_engine.llm_dispatcher.schedule_llm_analysis_dispatch()`로 전달됩니다. 현재 dispatcher는 실제 SuperMario_LLM HTTP 호출을 하지 않는 placeholder이며, 이후 `swmm_engine/llm_dispatcher.py`의 `dispatch_llm_analysis()` 안에 `/analyze` 호출, 기상청 데이터 결합, retry/로그 정책을 채우면 됩니다.
+1초 snapshot에는 `risk`와 `llmTrigger`가 optional로 포함됩니다. `risk.policy.level`은 `SUPERMARIO_RISK_POLICY_LEVEL` 값이며, 기본 `balanced`는 시작 직후 30 tick 동안 미세 역류를 안정화 구간으로 보고, 역류 유량/지속시간 기준을 만족한 뒤에만 WARNING/CRITICAL 위험으로 확정합니다. `llmTrigger.shouldTrigger`가 `true`인 snapshot은 `apps/simulation/state.py`의 `broadcast()`에서 `swmm_engine.llm_dispatcher.schedule_llm_analysis_dispatch()`로 전달됩니다. 현재 dispatcher는 실제 SuperMario_LLM HTTP 호출을 하지 않는 placeholder이며, 이후 `swmm_engine/llm_dispatcher.py`의 `dispatch_llm_analysis()` 안에 `/analyze` 호출, retry/로그 정책을 채우면 됩니다.
+
+LLM 전송용 context에는 `modelPath`, `runtimeModelPath`, `tickLogPath`, `rawSnapshotRef` 같은 로컬 파일 경로와 `contextExports`, `manifestPath`, `directory`, `exportKey` 같은 디버그 export 메타데이터를 포함하지 않습니다. `llm_dispatcher.sanitize_llm_context()`가 실제 전송 직전에 한 번 더 제거합니다.
+
+### 위험 발생 순간 context 파일 저장
+
+팀원에게 전달할 분석용 파일이 필요하면 아래 옵션을 켠 상태로 Django 서버를 실행합니다.
+
+```bash
+SUPERMARIO_RISK_PAUSE_ON_TRIGGER=true \
+SUPERMARIO_RISK_EXPORT_CONTEXT_ON_TRIGGER=true \
+.venv/bin/python manage.py runserver 127.0.0.1:8000 --verbosity 3
+```
+
+`llmTrigger.shouldTrigger=true`가 되는 tick에서 엔진은 자동 일시정지되고, 기본 경로 `backend/swmm_engine/logs/risk-context-exports/{runId}/step-000000-{reason}/` 아래에 다음 파일을 한 번만 저장합니다.
+
+| 파일 | 용도 |
+| --- | --- |
+| `manifest.json` | runId, stepIndex, 발생 사유, 생성된 파일 목록 |
+| `context-optimal.json` | LLM 알림/요약용 최소 context |
+| `context-medium.json` | 주요 이상 객체와 관련 상태를 포함한 중간 크기 context |
+| `context-full.json` | raw snapshot까지 포함한 디버깅용 전체 context |
+| `websocket-payload.json` | React WebSocket으로 나가는 실제 snapshot payload |
+
+저장 위치를 바꾸려면 `SUPERMARIO_RISK_CONTEXT_EXPORT_DIR=/absolute/path`를 지정합니다.
 
 ## 주요 요청 예시
 
@@ -267,10 +323,20 @@ SuperMario_Django/
 | `DJANGO_DEBUG` | `true` | Django debug 모드 |
 | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | 허용 host 목록 |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | React 개발 서버 CORS 허용 origin |
+| `DATABASE_ENGINE` | `sqlite` | DB 엔진. `sqlite`, `postgres` 지원 |
 | `SQLITE_PATH` | `backend/db.sqlite3` | SQLite DB 파일 경로 |
+| `POSTGRES_DB` | `supermario` | PostgreSQL database 이름 |
+| `POSTGRES_USER` | `supermario` | PostgreSQL 사용자 |
+| `POSTGRES_PASSWORD` | 없음 | PostgreSQL 비밀번호. 운영에서는 반드시 Secret으로 관리 |
+| `POSTGRES_HOST` | `postgres` | PostgreSQL host. Docker Compose에서는 service 이름 |
+| `POSTGRES_PORT` | `5432` | PostgreSQL container 내부 포트 |
+| `POSTGRES_HOST_PORT` | `5432` | 로컬 Docker Compose가 host에 노출할 PostgreSQL 포트 |
 | `ENABLE_LEGACY_SIMULATION_API` | `false` | legacy simulation API 활성화 여부 |
 | `SUPERMARIO_RISK_POLICY_LEVEL` | `balanced` | 이상상황 확정 기준 레벨. `sensitive`, `balanced`, `strict` 지원 |
+| `SUPERMARIO_RISK_CONTEXT_LEVEL` | `optimal` | LLM trigger payload에 직접 붙일 context 크기. `optimal`, `medium`, `full` 지원 |
 | `SUPERMARIO_RISK_PAUSE_ON_TRIGGER` | `false` | 디버깅용. `true`이면 LLM trigger 발생 tick에서 엔진을 자동 일시정지 |
+| `SUPERMARIO_RISK_EXPORT_CONTEXT_ON_TRIGGER` | `false` | 디버깅용. `true`이면 LLM trigger 발생 tick에서 context 파일을 레벨별로 저장 |
+| `SUPERMARIO_RISK_CONTEXT_EXPORT_DIR` | `backend/swmm_engine/logs/risk-context-exports` | context 파일 저장 경로 |
 
 > macOS 기본 `python3`가 3.9 계열이면 `Django==6.0.6` 설치가 실패합니다. 이 경우 Homebrew, pyenv 등으로 Python 3.12 이상을 준비한 뒤 가상환경을 생성해야 합니다.
 
