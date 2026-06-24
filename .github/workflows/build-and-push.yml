@@ -76,3 +76,58 @@ jobs:
               "source_branch": "${{ github.ref_name }}",
               "source_sha": "${{ github.sha }}"
             }
+
+      - name: Notify Telegram
+        if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.ACTIONS_TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.ACTIONS_TELEGRAM_CHAT_ID }}
+          STATUS: ${{ job.status }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW: ${{ github.workflow }}
+          JOB: ${{ github.job }}
+          BRANCH: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SERVICE_ICON: "🟦"
+          SERVICE_NAME: "SuperMario 백엔드"
+          EXTRA_LABEL: "헬스 테스트"
+          EXTRA_URL: "https://supermario.o-r.kr/api/engine/health"
+        run: |
+          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            echo "Telegram secrets are not set. Skipping notification."
+            exit 0
+          fi
+
+          case "$STATUS" in
+            success) STATUS_LABEL="성공"; STATUS_ICON="✅" ;;
+            failure) STATUS_LABEL="실패"; STATUS_ICON="❌" ;;
+            cancelled) STATUS_LABEL="취소"; STATUS_ICON="⚠️" ;;
+            *) STATUS_LABEL="$STATUS"; STATUS_ICON="ℹ️" ;;
+          esac
+
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          MESSAGE=$(printf '%s\n' \
+            "${SERVICE_ICON} ${SERVICE_NAME} Actions 알림" \
+            "" \
+            "상태: ${STATUS_ICON} ${STATUS_LABEL}" \
+            "레포: ${REPOSITORY}" \
+            "워크플로우: ${WORKFLOW}" \
+            "잡: ${JOB}" \
+            "브랜치: ${BRANCH}" \
+            "실행자: ${ACTOR}" \
+            "이벤트: ${EVENT_NAME}" \
+            "커밋: ${SHORT_SHA}" \
+            "" \
+            "실행 로그:" \
+            "${RUN_URL}" \
+            "" \
+            "${EXTRA_LABEL}:" \
+            "${EXTRA_URL}")
+
+          curl -fsS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            --data-urlencode text="$MESSAGE" \
+            || echo "Telegram notification failed."
