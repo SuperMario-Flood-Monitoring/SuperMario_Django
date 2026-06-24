@@ -200,7 +200,9 @@ dispatcher는 trigger context를 정리한 뒤 `SUPERMARIO_LLM_ANALYZE_URL`로
 `id`는 React 강수 preset `0/100/300` 또는 라벨 `맑음/비옴/폭우`를
 LangChain 계약의 `맑음/약한비/폭우`로 정규화한 값이다.
 짧은 시간에 위험 trigger가 연속 발생해도 Telegram/SNS 알림이 반복 발송되지
-않도록 `LLM_DISPATCH_COOLDOWN_SECONDS` 동안 새 LLM dispatch를 건너뛴다.
+않도록 `LLM_DISPATCH_COOLDOWN_SECONDS` 동안 새 LLM dispatch 요청을 건너뛴다.
+쿨다운 중인 trigger도 후보 로그에는 `cooldown_skipped` 상태로 남는다.
+LLM dispatch trigger는 위험 이슈가 같은 시간만큼 계속 유지된 뒤에만 열린다.
 
 ## 연결 종료
 

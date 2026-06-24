@@ -18,22 +18,27 @@
 | 항목                                   | 결과      |
 | -------------------------------------- | --------- |
 | Django system check                    | 통과      |
-| 활성 auth/facilities/simulation 테스트 | 20개 통과 |
-| 전체 테스트 발견 수                    | 20        |
-| 전체 테스트 성공                       | 20        |
+| 활성 auth/facilities/notification/simulation 테스트 | 28개 통과 |
+| 전체 테스트 발견 수                    | 28        |
+| 전체 테스트 성공                       | 28        |
 | 전체 테스트 실패                       | 0         |
 | 전체 테스트 오류                       | 0         |
 | 전체 테스트 최종 결과                  | 통과      |
 
 `manage.py check`는 `System check identified no issues (0 silenced).`로 통과했다.
 
-`apps.auth apps.facilities apps.simulation` 테스트는 20개 모두 통과했다.
+`apps.auth apps.facilities apps.notification apps.simulation` 테스트는 28개 모두
+통과했다.
 `apps.simulation`에는 LangChain payload의 `id`를 React 강수 preset 기준으로
 `맑음`, `약한비`, `폭우`로 정규화하는 LEVEL 13 회귀 테스트와 LLM 발송
 쿨다운을 검증하는 LEVEL 14 회귀 테스트, LLM 응답 timeout을
-`dispatch_failed`로 분류하지 않는 회귀 테스트가 포함된다.
+`dispatch_failed`로 분류하지 않는 회귀 테스트가 포함된다. LEVEL 15 기준으로
+쿨다운 중인 trigger는 LangChain 요청을 만들지 않지만 후보 로그는
+`cooldown_skipped` 상태로 남기는 것도 같은 테스트에서 검증한다. LEVEL 16 기준으로
+위험 이슈가 유지시간을 채운 뒤에만 LLM trigger가 열리고, 계속 유지되면 다음
+유지시간 이후 다시 trigger되는 lifecycle도 검증한다.
 
-현재 `manage.py test -v 2`의 전체 discovery 대상 20개 테스트는 모두 통과한다.
+현재 `manage.py test -v 2`의 전체 discovery 대상 28개 테스트는 모두 통과한다.
 
 ## 통과한 테스트
 
@@ -52,6 +57,12 @@
 | `apps.facilities.tests.FacilitiesViewTests.test_initialization_updates_facility_with_same_name`                    | 통과 |
 | `apps.facilities.tests.FacilitiesViewTests.test_initializes_multiple_facilities`                                   | 통과 |
 | `apps.facilities.tests.FacilitiesViewTests.test_rejects_unknown_facility_type`                                     | 통과 |
+| `apps.notification.tests.NotificationPayloadTests.test_builds_empty_notification_payload_without_rows`             | 통과 |
+| `apps.notification.tests.NotificationPayloadTests.test_builds_notification_payload_for_langchain`                  | 통과 |
+| `apps.notification.tests.NotificationRecipientApiTests.test_creates_notification_recipient`                        | 통과 |
+| `apps.notification.tests.NotificationRecipientApiTests.test_deletes_notification_recipient`                        | 통과 |
+| `apps.notification.tests.NotificationRecipientApiTests.test_lists_notification_recipients`                         | 통과 |
+| `apps.notification.tests.NotificationRecipientApiTests.test_rejects_notification_api_without_admin_token`          | 통과 |
 | `apps.simulation.tests.LangChainDispatchPayloadTests.test_allows_dispatch_after_cooldown`                          | 통과 |
 | `apps.simulation.tests.LangChainDispatchPayloadTests.test_builds_langchain_request_payload_shape`                  | 통과 |
 | `apps.simulation.tests.LangChainDispatchPayloadTests.test_normalizes_react_rainfall_preset_labels`                 | 통과 |
@@ -59,6 +70,8 @@
 | `apps.simulation.tests.LangChainDispatchPayloadTests.test_response_timeout_is_not_classified_as_dispatch_failed`    | 통과 |
 | `apps.simulation.tests.LangChainDispatchPayloadTests.test_skips_dispatch_during_cooldown`                          | 통과 |
 | `apps.simulation.tests.LangChainDispatchPayloadTests.test_uses_runtime_rainfall_ratio_when_explicit_id_is_missing` | 통과 |
+| `apps.simulation.tests.RiskLifecycleTriggerTests.test_retriggers_when_risk_remains_sustained_after_next_delay`     | 통과 |
+| `apps.simulation.tests.RiskLifecycleTriggerTests.test_triggers_after_risk_is_sustained_for_delay`                  | 통과 |
 
 ## 통과한 주요 테스트
 
@@ -66,7 +79,9 @@
 | ------------------------------------------ | --------: | ---- |
 | auth API 및 admin 생성 command             |        10 | 통과 |
 | facilities API                             |         3 | 통과 |
+| notification API 및 LLM notification payload |      6 | 통과 |
 | LLM dispatcher                             |         7 | 통과 |
+| risk lifecycle                             |         2 | 통과 |
 
 ## 남은 검증 범위
 

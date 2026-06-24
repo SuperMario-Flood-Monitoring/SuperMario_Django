@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "apps.auth.apps.AuthConfig",
     "apps.facilities",
+    "apps.notification.apps.NotificationConfig",
     "apps.scenarios",
     "apps.simulation",
     "django.contrib.admin",

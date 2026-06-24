@@ -63,6 +63,17 @@ erDiagram
         varchar NAME UK
         varchar TELEGRAM_TOKEN
     }
+
+    BOT_TOKEN {
+        bigint id PK
+        varchar bot_token
+    }
+
+    NOTIFICATION_RECIPIENTS {
+        bigint id PK
+        varchar employee_name
+        varchar chat_id
+    }
 ```
 
 현재 두 테이블 사이에 외래 키는 없다. SWMM 런타임 snapshot과 tick log는 DB가
@@ -123,6 +134,7 @@ React 편집모드에서 저장한 배수도 layout JSON을 보관한다.
 | --- | --- |
 | `custom_auth` | `apps/auth/migrations/0001_initial.py` |
 | `facilities` | `apps/facilities/migrations/0001_initial.py` |
+| `notification` | `apps/notification/migrations/0001_initial.py` |
 | `scenarios` | `apps/scenarios/migrations/0001_initial.py` |
 
 `apps/simulation`에는 현재 활성 모델과 마이그레이션이 없다. 예전
@@ -156,11 +168,33 @@ python manage.py ensure_admin_user --only-if-no-admin
 
 ## Notifications
 
-Telegram 알림 토큰을 저장할 테이블이다. 현재 LEVEL 9에서는 CRUD와 발송 로직을
-구현하지 않고 스키마만 준비한다.
+`apps.auth.models.Notification`에 남아 있는 이전 Telegram token 테이블이다.
+현재 LEVEL 17 알림 전송 기준은 아래 `bot_token`, `notification_recipients`
+테이블이다.
 
 | 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
 | --- | --- | --- | --- | --- |
 | `TOKEN_ID` | BigAutoField | 아니요 | 자동 증가 | PK |
 | `NAME` | CharField(150) | 아니요 | 없음 | Unique |
 | `TELEGRAM_TOKEN` | CharField(255) | 아니요 | 없음 | Telegram token |
+
+## Bot Token
+
+문자를 발송하는 Telegram bot token을 원문으로 저장한다. 운영자가 직접 1개 row를
+삽입해 사용한다.
+
+| 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
+| --- | --- | --- | --- | --- |
+| `id` | BigAutoField | 아니요 | 자동 증가 | PK |
+| `bot_token` | CharField(255) | 아니요 | 없음 | Telegram bot token 원문 |
+
+## Notification Recipients
+
+Telegram 알림을 받을 인원을 저장한다. ADMIN 사용자는 API로 생성, 전체 조회,
+삭제할 수 있다.
+
+| 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
+| --- | --- | --- | --- | --- |
+| `id` | BigAutoField | 아니요 | 자동 증가 | PK |
+| `employee_name` | CharField(100) | 아니요 | 없음 | 수신자 이름 |
+| `chat_id` | CharField(100) | 아니요 | 없음 | Telegram chat ID 원문 |

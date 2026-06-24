@@ -37,6 +37,7 @@ from swmm_engine.risk import (
     get_risk_policy,
     normalize_risk_policy_level,
 )
+from swmm_engine.llm_dispatcher import LLM_DISPATCH_COOLDOWN_SECONDS
 
 from .bridge import (
     CONTROL_LINK_TYPES,
@@ -93,6 +94,7 @@ RISK_CONTEXT_EXPORT_DIR = env_path(
 RISK_EXPORT_CONTEXT_ON_TRIGGER = env_flag("SUPERMARIO_RISK_EXPORT_CONTEXT_ON_TRIGGER")
 RISK_RESOLUTION_GRACE_TICKS = int(RISK_POLICY.get("resolutionGraceTicks") or 5)
 RISK_PAUSE_ON_TRIGGER = env_flag("SUPERMARIO_RISK_PAUSE_ON_TRIGGER")
+RISK_LLM_SUSTAIN_SECONDS = LLM_DISPATCH_COOLDOWN_SECONDS
 RISK_SEVERITY_RANK = {
     "NORMAL": 0,
     "WATCH": 1,
@@ -671,8 +673,9 @@ class RealtimeSwmmSession:
         return editor_states
 
     def update_risk_issue_lifecycle(self, risk_result: dict[str, Any]) -> dict[str, Any]:
-        """LLM 호출 후보를 새 이슈/심각도 상승에만 열어준다."""
+        """위험 이슈가 일정 시간 유지된 뒤 LLM 호출 후보를 열어준다."""
 
+        now = time.monotonic()
         raw_events = [event for event in risk_result.get("events", []) if isinstance(event, dict)]
         alert_events = [
             event
@@ -688,6 +691,7 @@ class RealtimeSwmmSession:
 
         new_issues: list[dict[str, Any]] = []
         escalated_issues: list[dict[str, Any]] = []
+        sustained_issues: list[dict[str, Any]] = []
         resolved_issues: list[dict[str, Any]] = []
 
         for issue_id, event in current_events_by_issue.items():
@@ -696,7 +700,9 @@ class RealtimeSwmmSession:
             if existing is None:
                 issue = self._risk_issue_record(issue_id, event)
                 issue["firstSeenStepIndex"] = self.step_index
-                issue["lastTriggeredStepIndex"] = self.step_index
+                issue["firstSeenMonotonic"] = now
+                issue["lastTriggeredStepIndex"] = None
+                issue["lastTriggeredMonotonic"] = None
                 self.active_risk_issues[issue_id] = issue
                 new_issues.append(dict(issue))
             else:
@@ -704,10 +710,17 @@ class RealtimeSwmmSession:
                 existing.update(self._risk_issue_record(issue_id, event))
                 if RISK_SEVERITY_RANK.get(severity, 0) > RISK_SEVERITY_RANK.get(previous_severity, 0):
                     existing["previousSeverity"] = previous_severity
-                    existing["lastTriggeredStepIndex"] = self.step_index
                     escalated_issues.append(dict(existing))
                 else:
                     existing.pop("previousSeverity", None)
+                issue = existing
+
+            if self.should_trigger_sustained_risk_issue(issue, now):
+                sustained_seconds = self.risk_issue_sustained_seconds(issue, now)
+                issue["lastTriggeredStepIndex"] = self.step_index
+                issue["lastTriggeredMonotonic"] = now
+                issue["sustainedSeconds"] = round(sustained_seconds, 3)
+                sustained_issues.append(dict(issue))
             self.risk_clear_counts.pop(issue_id, None)
 
         for issue_id in list(self.active_risk_issues):
@@ -722,23 +735,41 @@ class RealtimeSwmmSession:
             else:
                 self.risk_clear_counts[issue_id] = clear_count
 
-        triggered_issues = new_issues + escalated_issues
+        triggered_issues = sustained_issues
         return {
             "shouldTrigger": bool(triggered_issues),
-            "reason": self._risk_trigger_reason(new_issues, escalated_issues),
+            "reason": self._risk_trigger_reason(new_issues, escalated_issues, sustained_issues),
             "contextLevel": RISK_CONTEXT_LEVEL,
             "triggeredIssues": triggered_issues,
             "newIssueCount": len(new_issues),
             "escalatedIssueCount": len(escalated_issues),
+            "sustainedIssueCount": len(sustained_issues),
             "activeIssueCount": len(self.active_risk_issues),
             "resolvedIssues": resolved_issues,
             "suppression": {
-                "policy": "trigger_once_until_resolved_or_escalated",
+                "policy": "trigger_after_sustained_risk",
                 "riskPolicyLevel": RISK_POLICY_LEVEL,
                 "alertSeverities": sorted(RISK_ALERT_SEVERITIES),
                 "resolutionGraceTicks": RISK_RESOLUTION_GRACE_TICKS,
+                "sustainSeconds": RISK_LLM_SUSTAIN_SECONDS,
             },
         }
+
+    def risk_issue_sustained_seconds(self, issue: dict[str, Any], now: float) -> float:
+        """현재 위험 이슈가 마지막 발송 기준 이후 유지된 시간을 반환한다."""
+
+        base_time = issue.get("lastTriggeredMonotonic")
+        if base_time is None:
+            base_time = issue.get("firstSeenMonotonic")
+        try:
+            return max(0.0, now - float(base_time))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def should_trigger_sustained_risk_issue(self, issue: dict[str, Any], now: float) -> bool:
+        """위험 이슈가 LLM 발송 기준 시간 이상 유지됐는지 판단한다."""
+
+        return self.risk_issue_sustained_seconds(issue, now) >= RISK_LLM_SUSTAIN_SECONDS
 
     def _risk_issue_record(self, issue_id: str, event: dict[str, Any]) -> dict[str, Any]:
         record = {
@@ -793,13 +824,16 @@ class RealtimeSwmmSession:
             }
         return {"displayName": source_id}
 
-    def _risk_trigger_reason(self, new_issues: list[dict[str, Any]], escalated_issues: list[dict[str, Any]]) -> str | None:
-        if new_issues and escalated_issues:
-            return "new_issue_and_severity_escalation"
-        if new_issues:
-            return "new_issue"
-        if escalated_issues:
-            return "severity_escalation"
+    def _risk_trigger_reason(
+        self,
+        new_issues: list[dict[str, Any]],
+        escalated_issues: list[dict[str, Any]],
+        sustained_issues: list[dict[str, Any]],
+    ) -> str | None:
+        if sustained_issues:
+            if new_issues or escalated_issues:
+                return "sustained_risk_with_new_or_escalated_issue"
+            return "sustained_risk"
         return None
 
     def risk_context_export_key(self, trigger: dict[str, Any]) -> str:

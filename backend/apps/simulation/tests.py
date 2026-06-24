@@ -1,10 +1,12 @@
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase
 
 from swmm_engine import llm_dispatcher
+from swmm_engine.engine import runtime_engine
+from swmm_engine.engine.runtime_engine import RealtimeSwmmSession
 from swmm_engine.llm_dispatcher import (
     build_langchain_request_payload,
     extract_situation_id,
@@ -57,10 +59,16 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
             "riskEvents": [{"severity": "CRITICAL"}],
         }
 
-        payload = build_langchain_request_payload({}, {}, context)
+        with patch.object(
+            llm_dispatcher,
+            "build_notification_payload",
+            return_value={"bot_token": "token", "target": ["chat-1"]},
+        ):
+            payload = build_langchain_request_payload({}, {}, context)
 
         self.assertEqual(payload["id"], "약한비")
         self.assertEqual(json.loads(payload["swmm_raw_data"]), context)
+        self.assertEqual(payload["notification"], {"bot_token": "token", "target": ["chat-1"]})
 
     def test_skips_dispatch_during_cooldown(self):
         first_payload = _llm_trigger_payload(step_index=1)
@@ -75,7 +83,10 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
             self.assertTrue(llm_dispatcher.schedule_llm_analysis_dispatch(first_payload))
             self.assertFalse(llm_dispatcher.schedule_llm_analysis_dispatch(second_payload))
 
-        self.assertEqual(append_log.call_count, 1)
+        self.assertEqual(append_log.call_count, 2)
+        self.assertEqual(append_log.call_args_list[0].kwargs["status"], "scheduled")
+        self.assertEqual(append_log.call_args_list[1].kwargs["status"], "cooldown_skipped")
+        self.assertIn("remainingSeconds", append_log.call_args_list[1].kwargs["detail"])
         self.assertEqual(create_task.call_count, 1)
 
     def test_allows_dispatch_after_cooldown(self):
@@ -100,6 +111,11 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
         context = trigger["context"]
 
         with (
+            patch.object(
+                llm_dispatcher,
+                "build_langchain_request_payload_async",
+                new=AsyncMock(return_value={"id": "약한비", "swmm_raw_data": "{}", "notification": {}}),
+            ),
             patch.object(llm_dispatcher, "post_langchain_analysis", side_effect=TimeoutError("timed out")),
             patch.object(llm_dispatcher, "append_llm_dispatch_result_log") as append_result_log,
             self.assertLogs("swmm_engine.llm_dispatcher", level="INFO") as logs,
@@ -116,6 +132,54 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
         self.assertNotIn("LLM dispatch failed.", "\n".join(logs.output))
         append_result_log.assert_called_once()
         self.assertEqual(append_result_log.call_args.kwargs["status"], "response_timeout")
+
+
+class RiskLifecycleTriggerTests(SimpleTestCase):
+    def test_triggers_after_risk_is_sustained_for_delay(self):
+        session = _risk_lifecycle_session()
+        risk_result = _critical_risk_result()
+
+        with (
+            patch.object(runtime_engine, "RISK_LLM_SUSTAIN_SECONDS", 60),
+            patch.object(runtime_engine.time, "monotonic", side_effect=[1000.0, 1059.0, 1060.0]),
+        ):
+            session.step_index = 1
+            first = session.update_risk_issue_lifecycle(risk_result)
+            session.step_index = 2
+            before_delay = session.update_risk_issue_lifecycle(risk_result)
+            session.step_index = 3
+            after_delay = session.update_risk_issue_lifecycle(risk_result)
+
+        self.assertFalse(first["shouldTrigger"])
+        self.assertEqual(first["newIssueCount"], 1)
+        self.assertFalse(before_delay["shouldTrigger"])
+        self.assertTrue(after_delay["shouldTrigger"])
+        self.assertEqual(after_delay["reason"], "sustained_risk")
+        self.assertEqual(after_delay["sustainedIssueCount"], 1)
+        self.assertEqual(after_delay["triggeredIssues"][0]["sustainedSeconds"], 60.0)
+
+    def test_retriggers_when_risk_remains_sustained_after_next_delay(self):
+        session = _risk_lifecycle_session()
+        risk_result = _critical_risk_result()
+
+        with (
+            patch.object(runtime_engine, "RISK_LLM_SUSTAIN_SECONDS", 60),
+            patch.object(runtime_engine.time, "monotonic", side_effect=[1000.0, 1060.0, 1119.0, 1120.0]),
+        ):
+            session.step_index = 1
+            session.update_risk_issue_lifecycle(risk_result)
+            session.step_index = 2
+            first_trigger = session.update_risk_issue_lifecycle(risk_result)
+            session.step_index = 3
+            before_next_delay = session.update_risk_issue_lifecycle(risk_result)
+            session.step_index = 4
+            second_trigger = session.update_risk_issue_lifecycle(risk_result)
+
+        self.assertTrue(first_trigger["shouldTrigger"])
+        self.assertFalse(before_next_delay["shouldTrigger"])
+        self.assertTrue(second_trigger["shouldTrigger"])
+        self.assertEqual(second_trigger["triggeredIssues"][0]["lastTriggeredStepIndex"], 4)
+        self.assertEqual(second_trigger["triggeredIssues"][0]["sustainedSeconds"], 60.0)
 
 
 def _llm_trigger_payload(step_index: int) -> dict:
@@ -145,3 +209,37 @@ def _llm_trigger_payload(step_index: int) -> dict:
 def _close_coroutine(coroutine):
     coroutine.close()
     return None
+
+
+def _risk_lifecycle_session():
+    session = RealtimeSwmmSession.__new__(RealtimeSwmmSession)
+    session.step_index = 0
+    session.active_risk_issues = {}
+    session.risk_clear_counts = {}
+    session.swmm_links = {
+        "PIPE_1": {
+            "sourceEditorName": "테스트 관로",
+            "fromNode": "N1",
+            "toNode": "N2",
+        }
+    }
+    session.swmm_nodes = {
+        "N1": {"sourceEditorName": "상류 노드"},
+        "N2": {"sourceEditorName": "하류 노드"},
+    }
+    return session
+
+
+def _critical_risk_result():
+    return {
+        "events": [
+            {
+                "eventId": "event-1",
+                "eventType": "REVERSE_FLOW",
+                "severity": "CRITICAL",
+                "source": "link",
+                "sourceId": "PIPE_1",
+                "metrics": {"reverseTicks": 30},
+            }
+        ]
+    }

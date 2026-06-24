@@ -52,6 +52,7 @@ flowchart LR
 | `apps/common`                   | dataclass 기반 공통 DTO                                                         |
 | `apps/auth`                     | JWT 로그인, refresh rotation, `/api` 보호 middleware, custom users table        |
 | `apps/facilities`               | 시설 기준값 저장용 class-based view와 모델                                      |
+| `apps/notification`             | Telegram bot token과 알림 수신자 chat ID 관리                                  |
 | `apps/scenarios`                | React editor layout JSON 시나리오 CRUD                                          |
 | `apps/simulation`               | SWMM 엔진 API, 에디터 변환 API, WebSocket consumer, 전역 엔진 상태              |
 | `swmm_engine/converter`         | React editor layout JSON을 SWMM INP/report/mapping으로 변환                     |
@@ -112,13 +113,17 @@ flowchart LR
    `summary`, `risk`, `llmTrigger`를 포함한 snapshot을 만든다.
 7. `apps/simulation/state.py`가 snapshot을 Channels group `simulation`으로 broadcast한다.
 8. snapshot은 JSONL tick log에도 기록된다.
-9. 위험 trigger가 발생하면 `llm_dispatcher`가 다음 payload를
-   `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다.
+9. 위험 이슈가 설정된 유지시간 동안 계속되면 `llm_dispatcher`가 bot token과
+   수신자 chat ID를 조회해 다음 payload를 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다.
 
 ```json
 {
   "id": "폭우",
-  "swmm_raw_data": "{...sanitized context json...}"
+  "swmm_raw_data": "{...sanitized context json...}",
+  "notification": {
+    "bot_token": "...",
+    "target": ["..."]
+  }
 }
 ```
 

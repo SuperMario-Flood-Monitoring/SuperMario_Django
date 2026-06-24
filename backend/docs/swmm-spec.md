@@ -273,6 +273,10 @@ React editor 객체 하나가 여러 SWMM 객체로 분해될 수 있어 editor 
 `balanced` 정책은 시작 직후 30 tick 동안 미세 역류를 안정화 구간으로 보고,
 역류 유량과 지속시간 기준을 만족한 뒤에만 위험도를 올린다.
 
+SWMM 런타임 snapshot 자체는 현재 HTTP/WebSocket으로 동일한 구조를 전달하며
+상세도 선택 옵션은 없다. 다만 LLM으로 넘기는 분석 context는
+`RISK_CONTEXT_LEVEL`에서 `optimal`, `medium`, `full` 중 하나로 조정할 수 있다.
+
 ## LLM Context
 
 `llmTrigger.shouldTrigger=true`이면 snapshot에 LLM 분석용 `context`가 포함된다.
@@ -284,7 +288,11 @@ context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역
 ```json
 {
   "id": "약한비",
-  "swmm_raw_data": "<LLM context JSON string>"
+  "swmm_raw_data": "<LLM context JSON string>",
+  "notification": {
+    "bot_token": "<bot_token row의 bot_token>",
+    "target": ["<notification_recipients.chat_id>"]
+  }
 }
 ```
 
@@ -294,10 +302,18 @@ context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역
 명시 ID가 없으면 snapshot/context의 `rainfallRatio` 또는 `rainfallPercent`에서
 동일한 preset을 추론한다.
 
-LLM 발송은 `swmm_engine/llm_dispatcher.py`의
-`LLM_DISPATCH_COOLDOWN_SECONDS` 상수로 쿨다운을 둔다. 한 번 발송을 예약하면
-쿨다운이 끝날 때까지 새 위험 trigger가 발생해도 dispatch log와 LangChain 요청을
-생성하지 않는다.
+`notification.bot_token`은 `bot_token` 테이블의 첫 row에서 원문으로 조회하고,
+`notification.target`은 `notification_recipients`의 모든 `chat_id`를 원문으로
+조회한다. `bot_token` row가 없으면 `bot_token`은 `null`, 대상자가 없으면
+`target`은 빈 배열이다.
+
+LLM 발송은 위험한 수준의 이슈가 `LLM_DISPATCH_COOLDOWN_SECONDS` 동안 계속
+유지된 뒤에만 예약한다. 발송 뒤에도 같은 위험 이슈가 계속 유지되면 다시 같은
+시간을 기다린 뒤 재발송할 수 있다. 한 번 발송을 예약하면 쿨다운이 끝날 때까지
+새 위험 trigger가 발생해도 LangChain 요청은 생성하지 않는다.
+다만 후보 기록은 `llm-dispatch.jsonl`에 `cooldown_skipped` 상태로 남긴다.
+쿨다운 이후 새 위험 trigger가 다시 발생하면 다시 LangChain 요청을 예약하고,
+그 시점을 기준으로 다음 쿨다운을 시작한다.
 
 LangChain 응답 대기 시간은 `LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS` 상수로
 관리한다. 응답 timeout은 Telegram/SNS 발송 같은 LangChain 서버 내부 처리가 이미

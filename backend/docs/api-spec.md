@@ -6,7 +6,8 @@
 - 기준 구현: `config/urls.py`, `apps/*/urls.py`, `apps/*/apis/*.py`, `apps/facilities/views.py`
 - Base URL: `http://127.0.0.1:8000`
 - Content-Type: `application/json`
-- 인증: 현재 없음
+- 인증: `/api/auth/login`, `/api/auth/refresh`, `/api/engine/health`를 제외한
+  모든 `/api` endpoint는 ADMIN access token 필요
 
 ## 전체 라우팅
 
@@ -16,6 +17,7 @@
 | 에디터 변환 | `/api/editor/` | `apps/simulation/apis/editor_api.py` |
 | 시나리오 | `/api/scenarios` | `apps/scenarios/apis/scenario_api.py` |
 | 시설 | `/api/facilities/` | `apps/facilities/views.py` |
+| 알림 수신자 | `/api/notification/` | `apps/notification/views.py` |
 | 인증 | `/api/auth/` | `apps/auth/apis.py` |
 | 관리자 | `/admin/` | Django admin |
 
@@ -117,6 +119,67 @@ Refresh token은 `refresh_token` 이름의 `HttpOnly`, `Secure`,
 
 성공하면 access token과 refresh token을 모두 재발급한다. 이전 refresh token으로
 다시 요청하면 `403`을 반환하고 DB refresh token과 쿠키를 제거한다.
+
+## 알림 수신자 API
+
+ADMIN access token이 필요하다.
+
+### 수신자 생성
+
+- Method: `POST`
+- Path: `/api/notification/`
+- 성공: `201 Created`
+
+```json
+{
+  "employee_name": "홍길동",
+  "chat_id": "123456789"
+}
+```
+
+성공 응답:
+
+```json
+{
+  "success": true,
+  "httpStatus": 201,
+  "status": "CREATED",
+  "message": "Notification recipient created.",
+  "data": {
+    "id": 1,
+    "employee_name": "홍길동",
+    "chat_id": "123456789"
+  }
+}
+```
+
+### 수신자 전체 조회
+
+- Method: `GET`
+- Path: `/api/notification/list`
+- 성공: `200 OK`
+
+```json
+{
+  "success": true,
+  "httpStatus": 200,
+  "status": "OK",
+  "message": "Notification recipients found.",
+  "data": [
+    {
+      "id": 1,
+      "employee_name": "홍길동",
+      "chat_id": "123456789"
+    }
+  ]
+}
+```
+
+### 수신자 삭제
+
+- Method: `DELETE`
+- Path: `/api/notification/{id}`
+- 성공: `200 OK`
 
 ### 로그아웃
 

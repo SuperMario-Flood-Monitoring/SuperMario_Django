@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 PACKAGE_DIR = Path(__file__).resolve().parent
 LLM_DISPATCH_LOG_PATH = PACKAGE_DIR / "logs" / "llm-dispatch.jsonl"
 MAX_REMEMBERED_DISPATCH_KEYS = 1000
-LLM_DISPATCH_COOLDOWN_SECONDS = 300
+LLM_DISPATCH_COOLDOWN_SECONDS = 60
 LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS = 30
 DEFAULT_LANGCHAIN_SITUATION_ID = "약한비"
 LANGCHAIN_SITUATION_LABEL_BY_VALUE = {
@@ -101,8 +101,19 @@ def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
 
     dispatch_key = build_llm_dispatch_key(payload, trigger)
     now = time.monotonic()
+    if not remember_dispatch_key(dispatch_key):
+        return False
+
     remaining_seconds = llm_dispatch_cooldown_remaining_seconds(now)
     if remaining_seconds > 0:
+        append_llm_dispatch_log(
+            payload,
+            trigger,
+            sanitized_context,
+            dispatch_key,
+            status="cooldown_skipped",
+            detail={"remainingSeconds": round(remaining_seconds, 3)},
+        )
         logger.info(
             "LLM dispatch skipped by cooldown. dispatchKey=%s remainingSeconds=%.3f",
             dispatch_key,
@@ -110,11 +121,8 @@ def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
         )
         return False
 
-    if not remember_dispatch_key(dispatch_key):
-        return False
-
     _last_llm_dispatch_scheduled_at = now
-    append_llm_dispatch_log(payload, trigger, sanitized_context, dispatch_key)
+    append_llm_dispatch_log(payload, trigger, sanitized_context, dispatch_key, status="scheduled")
     logger.warning(
         "LLM dispatch scheduled. dispatchKey=%s runId=%s stepIndex=%s reason=%s issues=%s",
         dispatch_key,
@@ -146,7 +154,7 @@ async def dispatch_llm_analysis(
 ) -> dict[str, Any]:
     """SuperMario_LLM/LangChain 분석 endpoint로 위험 context를 POST한다."""
 
-    request_payload = build_langchain_request_payload(snapshot, trigger, context)
+    request_payload = await build_langchain_request_payload_async(snapshot, trigger, context)
 
     logger.debug(
         "LLM dispatch started. dispatchKey=%s runId=%s stepIndex=%s reason=%s id=%s contextKeys=%s",
@@ -255,12 +263,39 @@ def build_langchain_request_payload(
     snapshot: Mapping[str, Any],
     trigger: Mapping[str, Any],
     context: Mapping[str, Any],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """LangChain 서버가 요구하는 `{id, swmm_raw_data}` payload를 만든다."""
 
     return {
         "id": extract_situation_id(snapshot, trigger, context),
         "swmm_raw_data": json.dumps(context, ensure_ascii=False, separators=(",", ":")),
+        "notification": build_notification_payload(),
+    }
+
+
+async def build_langchain_request_payload_async(
+    snapshot: Mapping[str, Any],
+    trigger: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> dict[str, Any]:
+    """async dispatch 안에서 안전하게 LangChain 요청 payload를 만든다."""
+
+    return {
+        "id": extract_situation_id(snapshot, trigger, context),
+        "swmm_raw_data": json.dumps(context, ensure_ascii=False, separators=(",", ":")),
+        "notification": await asyncio.to_thread(build_notification_payload),
+    }
+
+
+def build_notification_payload() -> dict[str, Any]:
+    """LangChain 서버가 Telegram 알림에 사용할 bot token과 chat ID 목록을 조회한다."""
+
+    from apps.notification.models import BotToken, NotificationRecipient
+
+    bot_token = BotToken.objects.order_by("id").first()
+    return {
+        "bot_token": bot_token.bot_token if bot_token else None,
+        "target": list(NotificationRecipient.objects.order_by("id").values_list("chat_id", flat=True)),
     }
 
 
@@ -408,6 +443,9 @@ def append_llm_dispatch_log(
     trigger: Mapping[str, Any],
     context: Mapping[str, Any],
     dispatch_key: str,
+    *,
+    status: str,
+    detail: Mapping[str, Any] | None = None,
 ) -> None:
     """LLM 전송 후보 trigger마다 로컬 JSONL 기록을 남긴다."""
 
@@ -416,7 +454,7 @@ def append_llm_dispatch_log(
         record = {
             "loggedAt": datetime.now().isoformat(timespec="milliseconds"),
             "dispatchKey": dispatch_key,
-            "status": "scheduled",
+            "status": status,
             "runId": payload.get("runId"),
             "stepIndex": payload.get("stepIndex"),
             "modelTime": payload.get("modelTime"),
@@ -427,6 +465,8 @@ def append_llm_dispatch_log(
             "contextSanitized": True,
             "triggeredIssues": summarize_triggered_issues(trigger),
         }
+        if detail:
+            record["detail"] = dict(detail)
         with LLM_DISPATCH_LOG_PATH.open("a", encoding="utf-8") as log_file:
             log_file.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
     except Exception as exc:  # pragma: no cover - local logging must not stop simulation
