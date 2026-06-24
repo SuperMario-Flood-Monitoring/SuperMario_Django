@@ -1,6 +1,7 @@
 import json
 from unittest.mock import patch
 
+from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase
 
 from swmm_engine import llm_dispatcher
@@ -92,6 +93,29 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
 
         self.assertEqual(append_log.call_count, 2)
         self.assertEqual(create_task.call_count, 2)
+
+    def test_response_timeout_is_not_classified_as_dispatch_failed(self):
+        payload = _llm_trigger_payload(step_index=1)
+        trigger = payload["llmTrigger"]
+        context = trigger["context"]
+
+        with (
+            patch.object(llm_dispatcher, "post_langchain_analysis", side_effect=TimeoutError("timed out")),
+            patch.object(llm_dispatcher, "append_llm_dispatch_result_log") as append_result_log,
+            self.assertLogs("swmm_engine.llm_dispatcher", level="INFO") as logs,
+        ):
+            result = async_to_sync(llm_dispatcher.dispatch_llm_analysis)(
+                payload,
+                trigger,
+                context,
+                "dispatch-key",
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "response_timeout")
+        self.assertNotIn("LLM dispatch failed.", "\n".join(logs.output))
+        append_result_log.assert_called_once()
+        self.assertEqual(append_result_log.call_args.kwargs["status"], "response_timeout")
 
 
 def _llm_trigger_payload(step_index: int) -> dict:

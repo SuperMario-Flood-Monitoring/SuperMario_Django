@@ -299,6 +299,11 @@ LLM 발송은 `swmm_engine/llm_dispatcher.py`의
 쿨다운이 끝날 때까지 새 위험 trigger가 발생해도 dispatch log와 LangChain 요청을
 생성하지 않는다.
 
+LangChain 응답 대기 시간은 `LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS` 상수로
+관리한다. 응답 timeout은 Telegram/SNS 발송 같은 LangChain 서버 내부 처리가 이미
+진행됐을 수 있으므로 `dispatch_failed`가 아니라 `response_timeout` 결과로
+기록한다.
+
 ## JSONL Tick Log
 
 각 런타임 세션은 다음 경로에 tick log를 남긴다.

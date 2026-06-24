@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -23,6 +24,7 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 LLM_DISPATCH_LOG_PATH = PACKAGE_DIR / "logs" / "llm-dispatch.jsonl"
 MAX_REMEMBERED_DISPATCH_KEYS = 1000
 LLM_DISPATCH_COOLDOWN_SECONDS = 300
+LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS = 30
 DEFAULT_LANGCHAIN_SITUATION_ID = "약한비"
 LANGCHAIN_SITUATION_LABEL_BY_VALUE = {
     "0": "맑음",
@@ -158,36 +160,87 @@ async def dispatch_llm_analysis(
 
     try:
         response = await post_langchain_analysis(request_payload)
+    except (TimeoutError, socket.timeout) as exc:
+        detail = {
+            "error": str(exc),
+            "timeoutSeconds": LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS,
+        }
+        logger.info(
+            "LLM dispatch response timeout. dispatchKey=%s timeoutSeconds=%s",
+            dispatch_key,
+            LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS,
+        )
+        append_llm_dispatch_result_log(
+            snapshot,
+            trigger,
+            dispatch_key,
+            status="response_timeout",
+            detail=detail,
+        )
+        return {
+            "ok": False,
+            "status": "response_timeout",
+            "dispatchKey": dispatch_key,
+            "targetService": "SuperMario_LLM",
+            **detail,
+        }
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        detail = {
+            "statusCode": exc.code,
+            "responseBody": body,
+        }
         logger.warning(
             "LLM dispatch failed with HTTP status. dispatchKey=%s statusCode=%s body=%s",
             dispatch_key,
             exc.code,
             body[:500],
         )
+        append_llm_dispatch_result_log(
+            snapshot,
+            trigger,
+            dispatch_key,
+            status="http_error",
+            detail=detail,
+        )
         return {
             "ok": False,
             "status": "http_error",
             "dispatchKey": dispatch_key,
             "targetService": "SuperMario_LLM",
-            "statusCode": exc.code,
-            "responseBody": body,
+            **detail,
         }
     except Exception as exc:  # pragma: no cover - 외부 서버 장애는 시뮬레이션을 막지 않는다.
+        detail = {
+            "error": str(exc),
+        }
         logger.warning("LLM dispatch failed. dispatchKey=%s error=%s", dispatch_key, exc)
+        append_llm_dispatch_result_log(
+            snapshot,
+            trigger,
+            dispatch_key,
+            status="dispatch_failed",
+            detail=detail,
+        )
         return {
             "ok": False,
             "status": "dispatch_failed",
             "dispatchKey": dispatch_key,
             "targetService": "SuperMario_LLM",
-            "error": str(exc),
+            **detail,
         }
 
     logger.info(
         "LLM dispatch completed. dispatchKey=%s statusCode=%s",
         dispatch_key,
         response.get("statusCode"),
+    )
+    append_llm_dispatch_result_log(
+        snapshot,
+        trigger,
+        dispatch_key,
+        status="sent",
+        detail=response,
     )
     return {
         "ok": True,
@@ -318,7 +371,7 @@ async def post_langchain_analysis(payload: Mapping[str, Any]) -> dict[str, Any]:
     )
 
     def send() -> dict[str, Any]:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urllib.request.urlopen(request, timeout=LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS) as response:
             response_body = response.read(65536).decode("utf-8", errors="replace")
             return {
                 "statusCode": response.status,
