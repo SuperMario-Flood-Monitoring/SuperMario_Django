@@ -79,37 +79,37 @@
 
 converter는 layout을 다음 묶음으로 변환한다.
 
-| 필드 | 설명 |
-| --- | --- |
-| `inpText` | PySWMM/SWMM GUI가 읽을 수 있는 INP 텍스트 |
-| `report` | 변환 성공 여부, 카운트, 경고, 오류, 동적 제어 대상 |
-| `mapping` | React editor 객체와 SWMM node/link 사이의 매핑 |
+| 필드      | 설명                                               |
+| --------- | -------------------------------------------------- |
+| `inpText` | PySWMM/SWMM GUI가 읽을 수 있는 INP 텍스트          |
+| `report`  | 변환 성공 여부, 카운트, 경고, 오류, 동적 제어 대상 |
+| `mapping` | React editor 객체와 SWMM node/link 사이의 매핑     |
 
 ### 생성되는 주요 SWMM 섹션
 
-| SWMM 섹션 | 역할 |
-| --- | --- |
-| `[OPTIONS]` | CMS, DYNWAVE, 1초 report/routing step 기본 설정 |
-| `[JUNCTIONS]` | 일반 접합 노드 |
-| `[STORAGE]` | 빗물받이, 일부 시설형 객체 |
-| `[OUTFALLS]` | 방류구 |
-| `[PUMPS]` | 펌프형 연결 |
-| `[WEIRS]` | 월류형 연결 |
-| `[CONDUITS]` | 관로 |
-| `[XSECTIONS]` | 원형 관경 또는 위어 단면 |
-| `[LOSSES]` | 관로 손실계수 |
-| `[INFLOWS]`, `[TIMESERIES]` | 기본 강우/건천 유입 시계열 |
-| `[CONTROLS]` | 초기 폐쇄 링크 제어 |
-| `[REPORT]` | node/link report 설정 |
-| `[MAP]`, `[COORDINATES]` | 좌표 |
+| SWMM 섹션                   | 역할                                            |
+| --------------------------- | ----------------------------------------------- |
+| `[OPTIONS]`                 | CMS, DYNWAVE, 1초 report/routing step 기본 설정 |
+| `[JUNCTIONS]`               | 일반 접합 노드                                  |
+| `[STORAGE]`                 | 빗물받이, 일부 시설형 객체                      |
+| `[OUTFALLS]`                | 방류구                                          |
+| `[PUMPS]`                   | 펌프형 연결                                     |
+| `[WEIRS]`                   | 월류형 연결                                     |
+| `[CONDUITS]`                | 관로                                            |
+| `[XSECTIONS]`               | 원형 관경 또는 위어 단면                        |
+| `[LOSSES]`                  | 관로 손실계수                                   |
+| `[INFLOWS]`, `[TIMESERIES]` | 기본 강우/건천 유입 시계열                      |
+| `[CONTROLS]`                | 초기 폐쇄 링크 제어                             |
+| `[REPORT]`                  | node/link report 설정                           |
+| `[MAP]`, `[COORDINATES]`    | 좌표                                            |
 
 현재 관로 기본 단면은 원형 `CIRCULAR`이다. `size`는 다음 기본 관경으로 변환된다.
 
-| size | 관경 |
-| --- | --- |
-| `small` | 0.30 m |
+| size     | 관경   |
+| -------- | ------ |
+| `small`  | 0.30 m |
 | `medium` | 0.60 m |
-| `large` | 1.00 m |
+| `large`  | 1.00 m |
 
 ## 런타임 제어값
 
@@ -126,13 +126,13 @@ converter는 layout을 다음 묶음으로 변환한다.
 }
 ```
 
-| 필드 | 처리 |
-| --- | --- |
-| `rainfallRatio` 또는 `rainfall` | 0~1000으로 제한, 1 초과 값은 percent로 간주 |
-| `maxRainfallMmPerHour` | 강수량 비율의 최대 기준값 |
-| `speedMultiplier` | 1~10으로 제한 |
-| `blockagesById` | link 또는 node ID별 막힘 비율, 1 초과 값은 percent로 간주 |
-| `exceptions` | `{ blockage, swmmLinks }` 배열로 여러 link 막힘 지정 |
+| 필드                            | 처리                                                      |
+| ------------------------------- | --------------------------------------------------------- |
+| `rainfallRatio` 또는 `rainfall` | 0~1000으로 제한, 1 초과 값은 percent로 간주               |
+| `maxRainfallMmPerHour`          | 강수량 비율의 최대 기준값                                 |
+| `speedMultiplier`               | 1~10으로 제한                                             |
+| `blockagesById`                 | link 또는 node ID별 막힘 비율, 1 초과 값은 percent로 간주 |
+| `exceptions`                    | `{ blockage, swmmLinks }` 배열로 여러 link 막힘 지정      |
 
 강수 입력은 converter report의 `dynamicControls.rainfallTargets`에 직접 유입량으로
 적용된다. 막힘 입력은 link target/current setting 또는 flow limit에 반영된다.
@@ -185,16 +185,16 @@ converter는 layout을 다음 묶음으로 변환한다.
 }
 ```
 
-| 필드 | 단위 | 설명 |
-| --- | --- | --- |
-| `depthM` | m | 노드 수심 |
-| `headM` | m | 수두 |
-| `invertElevationM` | m | 관저고 |
-| `maxDepthM` | m | 표시 기준 최대 수심 |
-| `hydraulicMaxDepthM` | m | SWMM 계산 기준 최대 수심 |
-| `depthRatio` | ratio | `depthM / maxDepthM` |
-| `totalInflowCms` | m3/s | 총 유입량 |
-| `floodingCms` | m3/s | 월류량 |
+| 필드                 | 단위  | 설명                     |
+| -------------------- | ----- | ------------------------ |
+| `depthM`             | m     | 노드 수심                |
+| `headM`              | m     | 수두                     |
+| `invertElevationM`   | m     | 관저고                   |
+| `maxDepthM`          | m     | 표시 기준 최대 수심      |
+| `hydraulicMaxDepthM` | m     | SWMM 계산 기준 최대 수심 |
+| `depthRatio`         | ratio | `depthM / maxDepthM`     |
+| `totalInflowCms`     | m3/s  | 총 유입량                |
+| `floodingCms`        | m3/s  | 월류량                   |
 
 ## Link 상태
 
@@ -221,18 +221,18 @@ converter는 layout을 다음 묶음으로 변환한다.
 }
 ```
 
-| 필드 | 단위 | 설명 |
-| --- | --- | --- |
-| `flowCms` | m3/s | 관로 유량 |
-| `velocityMps` | m/s | 표시용 속도 |
-| `depthM` | m | 관로 수심 |
-| `fullness` | ratio | 관로 수심 / 관경 |
-| `capacityCms` | m3/s | Manning 기반 추정 만관 용량 |
-| `capacityRatio` | ratio | 유량 / 용량 |
-| `targetSetting` | ratio | 제어 목표 개도 |
-| `currentSetting` | ratio | 현재 개도 |
-| `blockageRatio` | ratio | 막힘 비율 |
-| `direction` | string | `forward` 또는 `reverse` |
+| 필드             | 단위   | 설명                        |
+| ---------------- | ------ | --------------------------- |
+| `flowCms`        | m3/s   | 관로 유량                   |
+| `velocityMps`    | m/s    | 표시용 속도                 |
+| `depthM`         | m      | 관로 수심                   |
+| `fullness`       | ratio  | 관로 수심 / 관경            |
+| `capacityCms`    | m3/s   | Manning 기반 추정 만관 용량 |
+| `capacityRatio`  | ratio  | 유량 / 용량                 |
+| `targetSetting`  | ratio  | 제어 목표 개도              |
+| `currentSetting` | ratio  | 현재 개도                   |
+| `blockageRatio`  | ratio  | 막힘 비율                   |
+| `direction`      | string | `forward` 또는 `reverse`    |
 
 ## Editor Object 상태
 
@@ -262,13 +262,13 @@ React editor 객체 하나가 여러 SWMM 객체로 분해될 수 있어 editor 
 
 주요 기준값은 다음과 같다.
 
-| 항목 | WATCH | WARNING | CRITICAL |
-| --- | --- | --- | --- |
-| 노드/관로 fill | 0.50 이상 | 0.70 이상 지속 | 0.90 이상 또는 surcharge 지속 |
-| 관로 capacity | - | 1.00 이상 지속 | 1.25 이상 지속 |
-| 막힘 | 0.50 이상 | 0.80 이상 지속 | 1.00 이상 지속 |
-| 역류 | 정책별 최소 유량과 startup grace 이후 | 정책별 지속 tick | 정책별 지속 tick |
-| 월류 | - | - | `floodingCms > 0.000001` 지속 |
+| 항목           | WATCH                                 | WARNING          | CRITICAL                      |
+| -------------- | ------------------------------------- | ---------------- | ----------------------------- |
+| 노드/관로 fill | 0.50 이상                             | 0.70 이상 지속   | 0.90 이상 또는 surcharge 지속 |
+| 관로 capacity  | -                                     | 1.00 이상 지속   | 1.25 이상 지속                |
+| 막힘           | 0.50 이상                             | 0.80 이상 지속   | 1.00 이상 지속                |
+| 역류           | 정책별 최소 유량과 startup grace 이후 | 정책별 지속 tick | 정책별 지속 tick              |
+| 월류           | -                                     | -                | `floodingCms > 0.000001` 지속 |
 
 `balanced` 정책은 시작 직후 30 tick 동안 미세 역류를 안정화 구간으로 보고,
 역류 유량과 지속시간 기준을 만족한 뒤에만 위험도를 올린다.
@@ -279,21 +279,25 @@ React editor 객체 하나가 여러 SWMM 객체로 분해될 수 있어 editor 
 context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역 상태 요약,
 정책, raw snapshot 참조 경로를 담는다.
 
-`llm_dispatcher`는 `llmTrigger.shouldTrigger=true`인 snapshot에서 sanitized
-context를 만들고 `SUPERMARIO_LLM_ANALYZE_URL`로 HTTP POST를 보낸다. 요청 형식은
-다음과 같다.
+`llm_dispatcher`는 `SUPERMARIO_LLM_ANALYZE_URL`로 다음 JSON을 POST한다.
 
 ```json
 {
-  "id": "폭우",
-  "swmm_raw_data": "{...sanitized context json...}"
+  "id": "약한비",
+  "swmm_raw_data": "<LLM context JSON string>"
 }
 ```
 
-`id`는 React가 제어 payload에 넣은 `id`, `situationId`, `scenarioId`, `reason`
-순서로 찾는다. 없으면 trigger reason 또는 highest severity를 fallback으로 쓴다.
-`swmm_raw_data`는 로컬 파일 경로와 debug export metadata가 제거된 context JSON
-문자열이다.
+`id`는 LangChain 서버 계약에 맞춰 `맑음`, `약한비`, `폭우` 중 하나로
+정규화한다. React 강수 preset은 `0 -> 맑음`, `100 -> 약한비`,
+`300 -> 폭우`로 변환하며, React 라벨 `비옴`도 `약한비`로 변환한다.
+명시 ID가 없으면 snapshot/context의 `rainfallRatio` 또는 `rainfallPercent`에서
+동일한 preset을 추론한다.
+
+LLM 발송은 `swmm_engine/llm_dispatcher.py`의
+`LLM_DISPATCH_COOLDOWN_SECONDS` 상수로 쿨다운을 둔다. 한 번 발송을 예약하면
+쿨다운이 끝날 때까지 새 위험 trigger가 발생해도 dispatch log와 LangChain 요청을
+생성하지 않는다.
 
 ## JSONL Tick Log
 

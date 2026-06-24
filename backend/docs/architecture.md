@@ -13,8 +13,8 @@ PySWMM 런타임 세션으로 실행한다. 엔진 snapshot은 HTTP 응답과 Ch
 WebSocket으로 전달된다.
 
 React 클라이언트와 FastAPI LangChain 서버는 외부 시스템이며 이 저장소에서
-구현하지 않는다. 위험 snapshot에서 `llmTrigger.shouldTrigger=true`가 되면
-`swmm_engine/llm_dispatcher.py`가 LangChain 서버로 HTTP POST 요청을 보낸다.
+구현하지 않는다. LangChain 호출은 `swmm_engine/llm_dispatcher.py`에서
+위험 trigger 발생 시 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다.
 
 ## 구성도
 
@@ -46,20 +46,20 @@ flowchart LR
 
 ## 모듈 책임
 
-| 경로 | 책임 |
-| --- | --- |
-| `config` | Django 설정, HTTP URL, ASGI HTTP/WebSocket 라우팅 |
-| `apps/common` | dataclass 기반 공통 DTO |
-| `apps/auth` | JWT 로그인, refresh rotation, `/api` 보호 middleware, custom users table |
-| `apps/facilities` | 시설 기준값 저장용 class-based view와 모델 |
-| `apps/scenarios` | React editor layout JSON 시나리오 CRUD |
-| `apps/simulation` | SWMM 엔진 API, 에디터 변환 API, WebSocket consumer, 전역 엔진 상태 |
-| `swmm_engine/converter` | React editor layout JSON을 SWMM INP/report/mapping으로 변환 |
-| `swmm_engine/engine` | PySWMM 세션 생성, tick loop, pause/resume/stop/control 처리 |
-| `swmm_engine/risk` | snapshot 구조 검증, deterministic 위험 이벤트 판정, LLM context 생성 |
-| `swmm_engine/llm_dispatcher.py` | 위험 snapshot을 외부 LLM 서버로 POST하고 dispatch log 기록 |
-| `legacy` | 협업 전 임시 `/api/simulations/` 흐름 보관 |
-| `backend/docs` | 현재 구현 기준 기술 문서 |
+| 경로                            | 책임                                                                            |
+| ------------------------------- | ------------------------------------------------------------------------------- |
+| `config`                        | Django 설정, HTTP URL, ASGI HTTP/WebSocket 라우팅                               |
+| `apps/common`                   | dataclass 기반 공통 DTO                                                         |
+| `apps/auth`                     | JWT 로그인, refresh rotation, `/api` 보호 middleware, custom users table        |
+| `apps/facilities`               | 시설 기준값 저장용 class-based view와 모델                                      |
+| `apps/scenarios`                | React editor layout JSON 시나리오 CRUD                                          |
+| `apps/simulation`               | SWMM 엔진 API, 에디터 변환 API, WebSocket consumer, 전역 엔진 상태              |
+| `swmm_engine/converter`         | React editor layout JSON을 SWMM INP/report/mapping으로 변환                     |
+| `swmm_engine/engine`            | PySWMM 세션 생성, tick loop, pause/resume/stop/control 처리                     |
+| `swmm_engine/risk`              | snapshot 구조 검증, deterministic 위험 이벤트 판정, LLM context 생성            |
+| `swmm_engine/llm_dispatcher.py` | 위험 snapshot을 외부 LLM 서버로 전송하고 LangChain 상황 ID와 알림 쿨다운을 관리 |
+| `legacy`                        | 예전 `/api/simulations/` 흐름과 테스트 보관                                     |
+| `backend/docs`                  | 현재 구현 기준 기술 문서                                                        |
 
 ## 주요 처리 흐름
 
@@ -126,17 +126,17 @@ flowchart LR
 
 Django 계층은 가능하면 `swmm_engine.interface`만 import한다.
 
-| 공개 함수 | 역할 |
-| --- | --- |
-| `convert_layout_to_inp()` | React layout을 INP/report/mapping으로 변환 |
-| `create_engine_session()` | `SwmmRuntimeEngine` 생성 |
-| `start_engine()` | 새 runtime 세션 시작 |
-| `apply_controls()` | 강수, 막힘, 배속 제어 변경 |
-| `pause_engine()` / `resume_engine()` | tick loop 일시정지와 재개 |
-| `stop_engine()` | 세션 종료 |
-| `validate_snapshot()` | snapshot 구조 검증 |
-| `detect_risks()` | 위험 이벤트 판정 |
-| `build_llm_context()` | LLM 분석용 context 생성 |
+| 공개 함수                            | 역할                                       |
+| ------------------------------------ | ------------------------------------------ |
+| `convert_layout_to_inp()`            | React layout을 INP/report/mapping으로 변환 |
+| `create_engine_session()`            | `SwmmRuntimeEngine` 생성                   |
+| `start_engine()`                     | 새 runtime 세션 시작                       |
+| `apply_controls()`                   | 강수, 막힘, 배속 제어 변경                 |
+| `pause_engine()` / `resume_engine()` | tick loop 일시정지와 재개                  |
+| `stop_engine()`                      | 세션 종료                                  |
+| `validate_snapshot()`                | snapshot 구조 검증                         |
+| `detect_risks()`                     | 위험 이벤트 판정                           |
+| `build_llm_context()`                | LLM 분석용 context 생성                    |
 
 향후 실제 SWMM 엔진 인터페이스가 별도 제공되면 `swmm_engine.interface` 뒤쪽 구현을
 교체하고, Django API와 WebSocket 계약은 유지하는 방향이 적합하다.
