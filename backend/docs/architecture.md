@@ -13,8 +13,8 @@ PySWMM 런타임 세션으로 실행한다. 엔진 snapshot은 HTTP 응답과 Ch
 WebSocket으로 전달된다.
 
 React 클라이언트와 FastAPI LangChain 서버는 외부 시스템이며 이 저장소에서
-구현하지 않는다. LangChain 호출은 현재 `swmm_engine/llm_dispatcher.py`의
-placeholder hook으로 남아 있고, 실제 HTTP 호출은 아직 연결되지 않았다.
+구현하지 않는다. LangChain 호출은 `swmm_engine/llm_dispatcher.py`에서
+위험 trigger 발생 시 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다.
 
 ## 구성도
 
@@ -57,7 +57,7 @@ flowchart LR
 | `swmm_engine/converter` | React editor layout JSON을 SWMM INP/report/mapping으로 변환 |
 | `swmm_engine/engine` | PySWMM 세션 생성, tick loop, pause/resume/stop/control 처리 |
 | `swmm_engine/risk` | snapshot 구조 검증, deterministic 위험 이벤트 판정, LLM context 생성 |
-| `swmm_engine/llm_dispatcher.py` | 위험 snapshot을 외부 LLM 서버로 보낼 future hook |
+| `swmm_engine/llm_dispatcher.py` | 위험 snapshot을 외부 LLM 서버로 전송하고 LangChain 상황 ID와 알림 쿨다운을 관리 |
 | `legacy` | 예전 `/api/simulations/` 흐름과 테스트 보관 |
 | `backend/docs` | 현재 구현 기준 기술 문서 |
 

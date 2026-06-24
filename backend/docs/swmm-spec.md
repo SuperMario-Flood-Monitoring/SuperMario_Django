@@ -279,8 +279,25 @@ React editor 객체 하나가 여러 SWMM 객체로 분해될 수 있어 editor 
 context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역 상태 요약,
 정책, raw snapshot 참조 경로를 담는다.
 
-현재 `llm_dispatcher`는 실제 SuperMario_LLM HTTP 호출을 수행하지 않는다. 향후
-`dispatch_llm_analysis()`에 `/analyze` 호출, retry, 로그 정책을 연결해야 한다.
+`llm_dispatcher`는 `SUPERMARIO_LLM_ANALYZE_URL`로 다음 JSON을 POST한다.
+
+```json
+{
+  "id": "약한비",
+  "swmm_raw_data": "<LLM context JSON string>"
+}
+```
+
+`id`는 LangChain 서버 계약에 맞춰 `맑음`, `약한비`, `폭우` 중 하나로
+정규화한다. React 강수 preset은 `0 -> 맑음`, `100 -> 약한비`,
+`300 -> 폭우`로 변환하며, React 라벨 `비옴`도 `약한비`로 변환한다.
+명시 ID가 없으면 snapshot/context의 `rainfallRatio` 또는 `rainfallPercent`에서
+동일한 preset을 추론한다.
+
+LLM 발송은 `swmm_engine/llm_dispatcher.py`의
+`LLM_DISPATCH_COOLDOWN_SECONDS` 상수로 쿨다운을 둔다. 한 번 발송을 예약하면
+쿨다운이 끝날 때까지 새 위험 trigger가 발생해도 dispatch log와 LangChain 요청을
+생성하지 않는다.
 
 ## JSONL Tick Log
 

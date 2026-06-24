@@ -2,14 +2,15 @@
 
 ## 실행 정보
 
-- 실행일: 2026-06-23
+- 실행일: 2026-06-24
 - 운영체제: Windows
 - Python: 3.14.4
 - 가상환경: `backend/.venv`
 - Django: 6.0.6
 - 명령어:
   - `.\backend\.venv\Scripts\python.exe backend\manage.py check`
-  - `.\backend\.venv\Scripts\python.exe backend\manage.py test apps.auth apps.facilities -v 2`
+  - `.\backend\.venv\Scripts\python.exe backend\manage.py test apps.simulation -v 2`
+  - `.\.venv\Scripts\python.exe manage.py test apps.auth apps.facilities apps.simulation -v 2` (`backend` 디렉터리에서 실행)
   - `.\.venv\Scripts\python.exe manage.py test -v 2` (`backend` 디렉터리에서 실행)
 
 ## 결과 요약
@@ -17,16 +18,19 @@
 | 항목 | 결과 |
 | --- | --- |
 | Django system check | 통과 |
-| 활성 auth/facilities 테스트 | 9개 통과 |
-| 전체 테스트 발견 수 | 22 |
-| 전체 테스트 성공 | 12 |
+| 활성 auth/facilities/simulation 테스트 | 17개 통과 |
+| 전체 테스트 발견 수 | 30 |
+| 전체 테스트 성공 | 20 |
 | 전체 테스트 실패 | 1 |
 | 전체 테스트 오류 | 9 |
 | 전체 테스트 최종 결과 | 실패 |
 
 `manage.py check`는 `System check identified no issues (0 silenced).`로 통과했다.
 
-`apps.auth apps.facilities` 테스트는 9개 모두 통과했다.
+`apps.auth apps.facilities apps.simulation` 테스트는 17개 모두 통과했다.
+`apps.simulation`에는 LangChain payload의 `id`를 React 강수 preset 기준으로
+`맑음`, `약한비`, `폭우`로 정규화하는 LEVEL 13 회귀 테스트와 LLM 발송
+쿨다운을 검증하는 LEVEL 14 회귀 테스트가 포함된다.
 
 전체 테스트는 legacy 테스트가 현재 기본 URL 라우팅과 인증 정책에 맞지 않아
 실패했다. 실패는 PySWMM 계산 실패가 아니라, 대부분 제거된 예전 namespace/path를
@@ -45,6 +49,12 @@
 | `apps.facilities.tests.FacilitiesViewTests.test_initialization_updates_facility_with_same_name` | 통과 |
 | `apps.facilities.tests.FacilitiesViewTests.test_initializes_multiple_facilities` | 통과 |
 | `apps.facilities.tests.FacilitiesViewTests.test_rejects_unknown_facility_type` | 통과 |
+| `apps.simulation.tests.LangChainDispatchPayloadTests.test_allows_dispatch_after_cooldown` | 통과 |
+| `apps.simulation.tests.LangChainDispatchPayloadTests.test_builds_langchain_request_payload_shape` | 통과 |
+| `apps.simulation.tests.LangChainDispatchPayloadTests.test_normalizes_react_rainfall_preset_labels` | 통과 |
+| `apps.simulation.tests.LangChainDispatchPayloadTests.test_normalizes_react_rainfall_preset_values` | 통과 |
+| `apps.simulation.tests.LangChainDispatchPayloadTests.test_skips_dispatch_during_cooldown` | 통과 |
+| `apps.simulation.tests.LangChainDispatchPayloadTests.test_uses_runtime_rainfall_ratio_when_explicit_id_is_missing` | 통과 |
 | `legacy.apps_simulation_legacy.tests.SimulationViewTests.test_csv_utility_round_trip` | 통과 |
 | `legacy.apps_simulation_legacy.tests.SimulationViewTests.test_initial_water_is_applied_to_first_swmm_step` | 통과 |
 | `legacy.apps_simulation_legacy.tests.SimulationViewTests.test_normalizes_swmm_section_model` | 통과 |
@@ -97,5 +107,5 @@ ValueError: No route found for path 'ws/simulation/'.
 - middleware 적용 후 전체 현재 API의 인증/인가 통합 테스트
 - PySWMM 네이티브 런타임이 Windows/Python 3.14.4 환경에서 안정적으로 동작하는지
   확인
-- LLM dispatcher 실제 HTTP 연동, retry, 실패 로그 정책
+- LLM dispatcher retry, 실패 결과 저장 정책, 실제 LangChain 서버와의 통합 테스트
 - 다중 클라이언트와 다중 프로세스 Channel Layer 검증
