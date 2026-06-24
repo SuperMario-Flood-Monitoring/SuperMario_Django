@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Convert React editor layout JSON into a first-pass SWMM .inp model.
+"""React editor layout JSON을 1차 SWMM .inp 모델로 변환한다.
 
-This converter treats the React editor JSON as the source of truth for topology.
-It intentionally does not depend on viewer/overall_drainage_diagram.html or the
-existing HTML contract. The output is a runnable, conservative SWMM skeleton
-that can later be refined with explicit hydraulic fields from the editor.
+이 converter는 React editor JSON을 배수도 topology의 source of truth로 취급한다.
+기존 `viewer/overall_drainage_diagram.html`이나 HTML contract에 의존하지 않는다.
+출력은 실행 가능한 보수적 SWMM 골격이며, 이후 editor가 명시적인 수리 필드를
+제공하면 더 정밀하게 보강할 수 있다.
 
-This Django-package copy is the implementation behind
-`swmm.interface.convert_layout_to_inp()`. The legacy root-level script remains
-for existing CLI/FastAPI compatibility, but Django code should use this package
-copy through the public interface.
+이 Django package copy는 `swmm.interface.convert_layout_to_inp()`의 내부 구현이다.
+기존 CLI/FastAPI 호환용 루트 script는 남겨 두지만, Django 코드는 공개
+interface를 통해 이 package copy를 사용해야 한다.
 """
 
 from __future__ import annotations
@@ -109,7 +108,7 @@ STORAGE_AREA_BY_FACILITY_KIND = {
 
 
 class ConversionError(Exception):
-    """Raised when an editor layout cannot be converted safely."""
+    """editor layout을 안전하게 변환할 수 없을 때 발생한다."""
 
 
 @dataclass(frozen=True)
@@ -199,14 +198,14 @@ def load_layout(path: str) -> dict[str, Any]:
     try:
         layout = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ConversionError(f"Editor layout JSON parse failed: {exc}") from exc
+        raise ConversionError(f"Editor layout JSON 파싱 실패: {exc}") from exc
 
     if not isinstance(layout, dict):
-        raise ConversionError("Editor layout must be a JSON object.")
+        raise ConversionError("Editor layout은 JSON object여야 합니다.")
     if layout.get("version") != 1:
-        raise ConversionError("Only EditorLayout version 1 is supported.")
+        raise ConversionError("EditorLayout version 1만 지원합니다.")
     if not isinstance(layout.get("nodes"), list) or not isinstance(layout.get("links"), list):
-        raise ConversionError("Editor layout must contain nodes[] and links[].")
+        raise ConversionError("Editor layout에는 nodes[]와 links[]가 있어야 합니다.")
     return layout
 
 
@@ -279,7 +278,7 @@ def map_point(point: Point, transform: MapTransform) -> Point:
 
 
 def depth_for_point(point: Point, ground_surface_y: float, scale_m_per_px: float) -> float:
-    # React screen y grows downward. Negative depths are surface/above-ground assets.
+    # React 화면 y축은 아래로 증가한다. 음수 깊이는 지표면/지상 객체를 의미한다.
     return max(0.0, (point.y - ground_surface_y) * scale_m_per_px)
 
 
@@ -401,7 +400,7 @@ def node_rotation_degrees(node: dict[str, Any]) -> int:
 
 
 def expected_station_direction(node: dict[str, Any]) -> int:
-    # 0deg: left -> right, 90deg: top -> bottom. Rotating 180/270 reverses station order.
+    # 0도는 left -> right, 90도는 top -> bottom이다. 180/270도 회전은 station 순서를 뒤집는다.
     return -1 if node_rotation_degrees(node) in {180, 270} else 1
 
 
@@ -502,9 +501,9 @@ def make_swmm_node(
     depth_m = depth_for_point(point, ground_surface_y, map_transform.scale_m_per_px)
     if section != "OUTFALLS":
         if section == "STORAGE":
-            # Storage-like editor objects have their own hydraulic depth.
-            # Screen depth can be hundreds of meters in the diagram and should
-            # not become the tank depth used for filling/overflow behavior.
+            # STORAGE 계열 editor object는 자체 수리 깊이를 가진다.
+            # 화면상의 깊이는 diagram에서 수백 m가 될 수 있으므로,
+            # 채움/월류 거동에 쓰는 tank 깊이로 사용하지 않는다.
             max_depth = max(max_depth, 1.0)
             display_max_depth = max(display_max_depth, 1.0)
         else:
@@ -733,7 +732,7 @@ def convert_layout(
 
     def add_link(link: SwmmLink) -> str | None:
         if link.from_node == link.to_node:
-            warnings.append(f"Skipped self-loop SWMM link {link.id}: {link.from_node}")
+            warnings.append(f"자기 자신을 연결하는 SWMM link를 건너뜀: {link.id}: {link.from_node}")
             return None
         link.id = unique_id(sanitize_id(link.id, f"link_{len(swmm_links) + 1}"), used_link_ids)
         swmm_links.append(link)
@@ -830,7 +829,7 @@ def convert_layout(
                 warnings.append(f"Ignored relation on unsupported pipe port {pipe_id}:{port_id}")
                 continue
             if station in stations and stations[station] is not None and stations[station] != other:
-                warnings.append(f"Multiple attachments share pipe station {pipe_id}@{station:.2f}; first attachment is used as SWMM junction.")
+                warnings.append(f"여러 연결이 같은 관로 station을 공유함: {pipe_id}@{station:.2f}; 첫 연결만 SWMM junction으로 사용합니다.")
                 continue
             stations[station] = other
 
@@ -1010,9 +1009,9 @@ def convert_layout(
 
     validate_swmm_references(swmm_nodes, swmm_links)
     if not any(node.section == "OUTFALLS" for node in swmm_nodes.values()):
-        errors.append("Generated model has no OUTFALLS node. Add at least one 방류구 before exporting a runnable drainage model.")
+        errors.append("생성된 모델에 OUTFALLS node가 없습니다. 실행 가능한 배수 모델을 내보내기 전에 방류구를 최소 1개 추가하세요.")
     if not swmm_links:
-        errors.append("Generated model has no hydraulic links.")
+        errors.append("생성된 모델에 수리 link가 없습니다.")
 
     return ConvertResult(
         swmm_nodes,
@@ -1067,7 +1066,7 @@ def render_inp(result: ConvertResult, *, title: str) -> str:
 
     add("[TITLE]")
     add(f";; {title}")
-    add(";; Generated from React editor layout JSON.")
+    add(";; React editor layout JSON에서 생성됨.")
     add("")
     add("[OPTIONS]")
     add("FLOW_UNITS           CMS")
@@ -1382,12 +1381,12 @@ def print_summary(result: ConvertResult, output_path: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Convert React editor layout JSON to a SWMM .inp skeleton.")
+    parser = argparse.ArgumentParser(description="React editor layout JSON을 SWMM .inp 골격으로 변환한다.")
     parser.add_argument("--input", "-i", required=True, help="EditorLayout JSON path, or '-' for stdin.")
-    parser.add_argument("--output", "-o", type=Path, default=DEFAULT_OUTPUT, help=f"Output .inp path. Default: {DEFAULT_OUTPUT}")
+    parser.add_argument("--output", "-o", type=Path, default=DEFAULT_OUTPUT, help=f"출력 .inp 경로. 기본값: {DEFAULT_OUTPUT}")
     parser.add_argument("--scale-m-per-px", type=float, default=0.5, help="Visual pixel to model meter scale.")
-    parser.add_argument("--map-height", type=float, default=2000.0, help="SWMM map Y inversion height.")
-    parser.add_argument("--title", default="SWMM model generated from React editor layout")
+    parser.add_argument("--map-height", type=float, default=2000.0, help="SWMM map Y축 반전에 사용할 높이.")
+    parser.add_argument("--title", default="React editor layout에서 생성한 SWMM model")
     args = parser.parse_args()
 
     try:

@@ -1,4 +1,4 @@
-# SuperMario SWMM Django Backend
+# SuperMario SWMM Django 백엔드
 
 도시 배수도 시나리오를 저장하고, React 클라이언트에서 전달한 배수도 JSON을 SWMM 런타임으로 실행하기 위한 Django 백엔드입니다.
 
@@ -163,7 +163,7 @@ curl http://127.0.0.1:8000/api/engine/status
 
 ## API
 
-### Engine API
+### 엔진 API
 
 기본 공개 prefix는 `/api/engine/`입니다.
 
@@ -178,7 +178,7 @@ curl http://127.0.0.1:8000/api/engine/status
 | 엔진 일시정지 | POST | `/api/engine/pause` |
 | 엔진 재개 | POST | `/api/engine/resume` |
 
-### Editor API
+### 에디터 API
 
 기본 공개 prefix는 `/api/editor/`입니다.
 
@@ -188,7 +188,7 @@ curl http://127.0.0.1:8000/api/engine/status
 | INP 다운로드 | POST | `/api/editor/export-inp` |
 | INP/report/mapping ZIP 다운로드 | POST | `/api/editor/convert/download` |
 
-### Scenario API
+### 시나리오 API
 
 기본 prefix는 `/api/`입니다.
 
@@ -206,7 +206,7 @@ curl http://127.0.0.1:8000/api/engine/status
 GET /api/scenarios?includeInactive=true
 ```
 
-### WebSocket
+### 웹소켓
 
 ```text
 ws://127.0.0.1:8000/api/ws/simulation
@@ -214,7 +214,7 @@ ws://127.0.0.1:8000/api/ws/simulation
 
 클라이언트가 연결되면 현재 엔진 snapshot이 있으면 snapshot을, 없으면 엔진 상태 payload를 즉시 전송합니다.
 
-1초 snapshot에는 `risk`와 `llmTrigger`가 optional로 포함됩니다. `risk.policy.level`은 `SUPERMARIO_RISK_POLICY_LEVEL` 값이며, 기본 `balanced`는 시작 직후 30 tick 동안 미세 역류를 안정화 구간으로 보고, 역류 유량/지속시간 기준을 만족한 뒤에만 WARNING/CRITICAL 위험으로 확정합니다. `llmTrigger.shouldTrigger`가 `true`인 snapshot은 `apps/simulation/state.py`의 `broadcast()`에서 `swmm_engine.llm_dispatcher.schedule_llm_analysis_dispatch()`로 전달됩니다. 현재 dispatcher는 실제 SuperMario_LLM HTTP 호출을 하지 않는 placeholder이며, 이후 `swmm_engine/llm_dispatcher.py`의 `dispatch_llm_analysis()` 안에 `/analyze` 호출, retry/로그 정책을 채우면 됩니다.
+1초 snapshot에는 `risk`와 `llmTrigger`가 optional로 포함됩니다. `risk.policy.level`은 `SUPERMARIO_RISK_POLICY_LEVEL` 값이며, 기본 `balanced`는 시작 직후 30 tick 동안 미세 역류를 안정화 구간으로 보고, 역류 유량/지속시간 기준을 만족한 뒤에만 WARNING/CRITICAL 위험으로 확정합니다. `llmTrigger.shouldTrigger`가 `true`인 snapshot은 `apps/simulation/state.py`의 `broadcast()`에서 `swmm_engine.llm_dispatcher.schedule_llm_analysis_dispatch()`로 전달됩니다. dispatcher는 `SUPERMARIO_LLM_ANALYZE_URL`로 `{"id": "...", "swmm_raw_data": "..."}` payload를 POST하고 `swmm_engine/logs/llm-dispatch.jsonl`에 예약/결과를 기록합니다.
 
 LLM 전송용 context에는 `modelPath`, `runtimeModelPath`, `tickLogPath`, `rawSnapshotRef` 같은 로컬 파일 경로와 `contextExports`, `manifestPath`, `directory`, `exportKey` 같은 디버그 export 메타데이터를 포함하지 않습니다. `llm_dispatcher.sanitize_llm_context()`가 실제 전송 직전에 한 번 더 제거합니다.
 
@@ -299,17 +299,17 @@ SuperMario_Django/
 │   │   └── asgi.py
 │   ├── apps/
 │   │   ├── scenarios/       # 시나리오 DB 모델, API, service
-│   │   ├── simulation/      # 엔진 API, 에디터 변환 API, WebSocket
+│   │   ├── simulation/      # 엔진 API, 에디터 변환 API, 웹소켓
 │   │   ├── facilities/      # 기존 시설 API
 │   │   └── common/          # 공통 DTO
 │   ├── swmm_engine/
 │   │   ├── converter/       # React layout -> SWMM INP 변환
-│   │   ├── engine/          # 실시간 SWMM runtime session
+│   │   ├── engine/          # 실시간 SWMM 런타임 세션
 │   │   ├── risk/            # snapshot 이상상황 감지와 LLM context 생성
-│   │   ├── llm_dispatcher.py # 향후 SuperMario_LLM 호출 hook
+│   │   ├── llm_dispatcher.py # SuperMario_LLM 호출 hook
 │   │   ├── interface.py     # Django에서 호출하는 엔진 interface
 │   │   └── logs/            # runtime tick log
-│   ├── legacy/              # 팀원 테스트/레거시 코드
+│   ├── legacy/              # 이전 임시 코드
 │   ├── db.sqlite3
 │   └── requirements.txt
 └── README.md
@@ -327,7 +327,7 @@ SuperMario_Django/
 | `SUPERMARIO_REFRESH_COOKIE_SAMESITE` | `Lax` | refresh cookie SameSite 정책 |
 | `SUPERMARIO_REFRESH_COOKIE_SECURE` | local `false`, prod `true` | refresh cookie Secure 설정 |
 | `SUPERMARIO_INITIAL_ADMIN_USERNAME` | `admin` | ADMIN이 없을 때 자동 생성할 초기 관리자 ID |
-| `SUPERMARIO_INITIAL_ADMIN_PASSWORD` | `수퍼마리오4` | ADMIN이 없을 때 자동 생성할 초기 관리자 비밀번호 |
+| `SUPERMARIO_INITIAL_ADMIN_PASSWORD` | `tnvjakfldh4` | ADMIN이 없을 때 자동 생성할 초기 관리자 비밀번호 |
 | `DATABASE_ENGINE` | `sqlite` | DB 엔진. `sqlite`, `postgres` 지원 |
 | `SQLITE_PATH` | `backend/db.sqlite3` | SQLite DB 파일 경로 |
 | `POSTGRES_DB` | `supermario` | PostgreSQL database 이름 |
@@ -336,7 +336,7 @@ SuperMario_Django/
 | `POSTGRES_HOST` | `postgres` | PostgreSQL host. Docker Compose에서는 service 이름 |
 | `POSTGRES_PORT` | `5432` | PostgreSQL container 내부 포트 |
 | `POSTGRES_HOST_PORT` | `5432` | 로컬 Docker Compose가 host에 노출할 PostgreSQL 포트 |
-| `ENABLE_LEGACY_SIMULATION_API` | `false` | legacy simulation API 활성화 여부 |
+| `ENABLE_LEGACY_SIMULATION_API` | `false` | 이전 simulation API 활성화 여부 |
 | `SUPERMARIO_RISK_POLICY_LEVEL` | `balanced` | 이상상황 확정 기준 레벨. `sensitive`, `balanced`, `strict` 지원 |
 | `SUPERMARIO_RISK_CONTEXT_LEVEL` | `optimal` | LLM trigger payload에 직접 붙일 context 크기. `optimal`, `medium`, `full` 지원 |
 | `SUPERMARIO_RISK_PAUSE_ON_TRIGGER` | `false` | 디버깅용. `true`이면 LLM trigger 발생 tick에서 엔진을 자동 일시정지 |
@@ -352,7 +352,7 @@ SuperMario_Django/
 - `stepSeconds: 1` 실시간 계약을 기본값으로 유지합니다.
 - React layout 객체 ID와 SWMM 변환 mapping을 임의로 분리하지 않습니다.
 - 엔진은 Django view에서 직접 계산하지 않고 `swmm_engine.interface`를 통해 실행합니다.
-- WebSocket broadcast는 Channels group event를 사용하며, `swmm.message` event는 consumer의 `swmm_message` handler로 전달됩니다.
+- 웹소켓 broadcast는 Channels group event를 사용하며, `swmm.message` event는 consumer의 `swmm_message` handler로 전달됩니다.
 - LLM 서버 호출은 SWMM 엔진 내부가 아니라 `swmm_engine.llm_dispatcher.dispatch_llm_analysis()`에서 연결합니다.
 
 ## 검증 명령

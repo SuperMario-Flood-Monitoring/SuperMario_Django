@@ -24,13 +24,13 @@ class ApiJwtAuthenticationMiddleware:
 
         token = self.extract_access_token(request)
         if not token:
-            return self.unauthorized("Access token is required.")
+            return self.unauthorized("access token이 필요합니다.")
 
         try:
             payload = decode_token(token, expected_type="access")
             user = User.objects.get(user_id=int(payload.get("sub")), role=User.Role.ADMIN)
         except (TokenError, TokenExpired, User.DoesNotExist, TypeError, ValueError):
-            return self.unauthorized("Access token is invalid or expired.")
+            return self.unauthorized("access token이 유효하지 않거나 만료되었습니다.")
 
         request.auth_user = user
         request.auth_payload = payload

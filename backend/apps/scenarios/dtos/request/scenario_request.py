@@ -16,7 +16,7 @@ class ScenarioCreateRequest(Schema):
     def normalize_title(cls, value: str) -> str:
         title = value.strip()
         if not title:
-            raise ValueError("title is required.")
+            raise ValueError("title이 필요합니다.")
         return title
 
     @field_validator("description")
@@ -38,7 +38,7 @@ class ScenarioUpdateRequest(Schema):
             return None
         title = value.strip()
         if not title:
-            raise ValueError("title is required.")
+            raise ValueError("title이 필요합니다.")
         return title
 
     @field_validator("description")

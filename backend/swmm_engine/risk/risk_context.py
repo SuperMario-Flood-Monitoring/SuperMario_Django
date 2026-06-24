@@ -1,7 +1,7 @@
-"""Validate SWMM runtime snapshots and build risk-focused context packets.
+"""SWMM runtime snapshot을 검증하고 위험 중심 context packet을 만든다.
 
-This module intentionally has no FastAPI/PySWMM dependency so it can be reused
-from FastAPI, Django, Channels, a background worker, or tests.
+이 모듈은 FastAPI/PySWMM에 의존하지 않도록 구성되어 FastAPI, Django,
+Channels, background worker, test에서 재사용할 수 있다.
 
 이 Django-package copy는 `swmm.interface.validate_snapshot()`,
 `detect_risks()`, `build_llm_context()`의 내부 구현이다. 장고 view,
@@ -189,7 +189,7 @@ def evaluate_swmm_risk(
     *,
     policy_level: str | None = None,
 ) -> dict[str, Any]:
-    """Create deterministic risk events from a SWMM runtime snapshot."""
+    """SWMM runtime snapshot에서 deterministic 위험 event를 생성한다."""
 
     policy = get_risk_policy(policy_level)
     validation = validate_swmm_snapshot(snapshot)
@@ -232,7 +232,7 @@ def evaluate_swmm_risk(
                     flooding_critical_ticks,
                     flooding_critical_ticks,
                 ),
-                "SWMM reported external flooding at this node.",
+                "SWMM이 이 node의 외부 침수를 보고했습니다.",
             ))
         elif depth_ratio >= SURCHARGE_RATIO:
             _condition_ticks(counters, flooding_key, False)
@@ -450,7 +450,7 @@ def evaluate_swmm_risk(
                     flooding_critical_ticks,
                     flooding_critical_ticks,
                 ),
-                "An editor object maps to a SWMM node with external flooding.",
+                "editor object가 외부 침수가 발생한 SWMM node에 매핑되어 있습니다.",
             ))
         elif max(max_depth, max_fullness, max_capacity) >= SURCHARGE_RATIO:
             _condition_ticks(counters, flooding_key, False)
@@ -466,7 +466,7 @@ def evaluate_swmm_risk(
                     fill_warning_ticks,
                     fill_critical_ticks,
                 ),
-                "An editor object maps to at least one full or capacity-limited SWMM element.",
+                "editor object가 만관 또는 용량 제한 상태의 SWMM 요소에 매핑되어 있습니다.",
             ))
         else:
             _condition_ticks(counters, flooding_key, False)

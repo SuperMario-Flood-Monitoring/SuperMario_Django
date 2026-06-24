@@ -1,4 +1,4 @@
-"""Django-facing SWMM engine boundary.
+"""Django에서 사용하는 SWMM 엔진 경계.
 
 이 패키지는 FastAPI 임시 서버를 거치지 않고 Django 코드가 직접 사용할
 PySWMM 실행 엔진을 제공한다. 일반 Django view/consumer에서는 가능하면

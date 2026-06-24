@@ -1,4 +1,4 @@
-"""Django 서버에서 직접 사용할 SWMM runtime engine.
+"""Django 서버에서 직접 사용할 SWMM 런타임 엔진.
 
 기존 임시 FastAPI 서버에서 쓰던 PySWMM 세션 제어 로직을 Django 패키지
 내부로 분리한 파일이다. 이 모듈은 HTTP route, FastAPI app, WebSocket 객체를
@@ -102,7 +102,7 @@ RISK_SEVERITY_RANK = {
 
 
 class SwmmRuntimeError(RuntimeError):
-    """Django view/consumer가 HTTP 오류로 바꿀 수 있는 runtime 예외."""
+    """Django view/consumer가 HTTP 오류로 바꿀 수 있는 런타임 예외."""
 
     def __init__(self, message: str, *, status_code: int = 500, detail: Any | None = None) -> None:
         super().__init__(message)
@@ -112,7 +112,7 @@ class SwmmRuntimeError(RuntimeError):
 
 @dataclass
 class RuntimeModelSpec:
-    """SWMM runtime이 실행할 임시/저장 모델과 React 매핑 정보."""
+    """SWMM 런타임이 실행할 임시/저장 모델과 React 매핑 정보."""
 
     model_path: Path
     mapping: dict[str, Any]
@@ -155,10 +155,10 @@ def build_editor_conversion_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     layout = payload.get("layout", payload)
     if not isinstance(layout, dict):
-        raise ConversionError("Request body must contain an EditorLayout object or { layout }.")
+        raise ConversionError("요청 body에는 EditorLayout object 또는 { layout }이 있어야 합니다.")
     scale_m_per_px = float(payload.get("scaleMPerPx", 0.5) or 0.5)
     map_height = float(payload.get("mapHeight", 2000.0) or 2000.0)
-    title = str(payload.get("title") or "SWMM model generated from React editor layout")
+    title = str(payload.get("title") or "React editor layout에서 생성한 SWMM model")
     result = convert_layout(layout, scale_m_per_px=scale_m_per_px, map_height=map_height)
     inp_text = render_inp(result, title=title)
     report = render_conversion_report(result, inp_text=inp_text)
@@ -183,7 +183,7 @@ def build_runtime_model_spec(payload: dict[str, Any]) -> RuntimeModelSpec:
     layout = payload.get("layout")
     if not isinstance(layout, dict):
         raise SwmmRuntimeError(
-            "Runtime start payload must include a React editor layout.",
+            "런타임 시작 payload에는 React editor layout이 있어야 합니다.",
             status_code=422,
             detail={"ok": False, "error": "layout_required"},
         )
@@ -191,7 +191,7 @@ def build_runtime_model_spec(payload: dict[str, Any]) -> RuntimeModelSpec:
     conversion = build_editor_conversion_payload(payload)
     if not conversion["ok"]:
         raise SwmmRuntimeError(
-            "React editor layout has SWMM conversion errors.",
+            "React editor layout에 SWMM 변환 오류가 있습니다.",
             status_code=422,
             detail={
                 "ok": False,
@@ -322,6 +322,8 @@ class RealtimeSwmmSession:
         self.step_index = 0
         self.rainfall_ratio = 0.0
         self.blockages_by_id: dict[str, float] = {}
+        self.situation_id: str | None = None
+        self.control_reason: str | None = None
         self.last_snapshot: dict[str, Any] | None = None
         self.last_log_error: str | None = None
         self.previous_risk_result: dict[str, Any] | None = None
@@ -436,6 +438,15 @@ class RealtimeSwmmSession:
         })
 
     def update_controls(self, payload: dict[str, Any]) -> dict[str, Any]:
+        for source_key, target_attr in (
+            ("id", "situation_id"),
+            ("situationId", "situation_id"),
+            ("scenarioId", "situation_id"),
+            ("reason", "control_reason"),
+        ):
+            if source_key in payload and payload.get(source_key) not in (None, ""):
+                setattr(self, target_attr, str(payload.get(source_key)))
+
         if "rainfallRatio" in payload or "rainfall" in payload:
             self.rainfall_ratio = clamp_rainfall_ratio(payload.get("rainfallRatio", payload.get("rainfall", self.rainfall_ratio)))
 
@@ -459,13 +470,18 @@ class RealtimeSwmmSession:
         return self.control_state()
 
     def control_state(self) -> dict[str, Any]:
-        return {
+        state = {
             "rainfallRatio": self.rainfall_ratio,
             "rainfallPercent": round(self.rainfall_ratio * 100.0, 2),
             "blockagesById": self.blockages_by_id,
             "maxRainfallMmPerHour": self.max_rainfall_mm_per_hour,
             "speedMultiplier": self.speed_multiplier,
         }
+        if self.situation_id:
+            state["id"] = self.situation_id
+        if self.control_reason:
+            state["reason"] = self.control_reason
+        return state
 
     def apply_external_inflows(self) -> None:
         inflow_cms = rainfall_cms_for_percent(
@@ -1064,7 +1080,7 @@ class SwmmRuntimeEngine:
     async def pause(self) -> dict[str, Any]:
         async with self.lock:
             if self.session is None:
-                raise SwmmRuntimeError("SWMM engine is not running.", status_code=409)
+                raise SwmmRuntimeError("SWMM 엔진이 실행 중이 아닙니다.", status_code=409)
             if self.task is not None and not self.task.done():
                 self.task.cancel()
                 try:
@@ -1082,7 +1098,7 @@ class SwmmRuntimeEngine:
     async def resume(self) -> dict[str, Any]:
         async with self.lock:
             if self.session is None:
-                raise SwmmRuntimeError("SWMM engine is not running.", status_code=409)
+                raise SwmmRuntimeError("SWMM 엔진이 실행 중이 아닙니다.", status_code=409)
             if self.task is None or self.task.done():
                 self.paused = False
                 self.session.append_runtime_event("resumed")
@@ -1103,7 +1119,7 @@ class SwmmRuntimeEngine:
     async def update_controls(self, payload: dict[str, Any]) -> dict[str, Any]:
         async with self.lock:
             if self.session is None:
-                raise SwmmRuntimeError("SWMM engine is not running.", status_code=409)
+                raise SwmmRuntimeError("SWMM 엔진이 실행 중이 아닙니다.", status_code=409)
             control = self.session.update_controls(payload)
             snapshot = self.session.collect_snapshot("control")
             self.session.last_snapshot = snapshot

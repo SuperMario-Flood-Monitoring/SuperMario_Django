@@ -29,7 +29,7 @@ from ..dtos import (
 
 
 engine_api = NinjaAPI(
-    title="SWMM Engine API",
+    title="SWMM 엔진 API",
     version="1.0.0",
     urls_namespace="swmm_engine_api",
 )

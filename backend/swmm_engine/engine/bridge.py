@@ -1,4 +1,4 @@
-"""PySWMM runtime helper utilities used by the Django-facing engine.
+"""Django 엔진에서 사용하는 PySWMM 런타임 보조 함수.
 
 이 파일은 기존 FastAPI 임시 서버가 사용하던 SWMM 보조 함수 중,
 Django 패키지에서 실제 실행에 필요한 순수 함수만 분리한 모듈이다.
@@ -155,7 +155,7 @@ def import_pyswmm() -> tuple[Any, Any, Any]:
         if probe.returncode != 0:
             details = (probe.stderr or probe.stdout or "").strip()
             _PYSWMM_IMPORT_PROBE_ERROR = (
-                f"PySWMM import probe failed with exit code {probe.returncode}."
+                f"PySWMM import 사전 확인이 종료 코드 {probe.returncode}로 실패했습니다."
                 + (f" {details}" if details else "")
             )
         else:
@@ -168,8 +168,8 @@ def import_pyswmm() -> tuple[Any, Any, Any]:
         from pyswmm import Links, Nodes, Simulation
     except ModuleNotFoundError as exc:
         raise PySwmmUnavailable(
-            "PySWMM is not installed. Install it first with `python3 -m pip install pyswmm`."
+            "PySWMM이 설치되어 있지 않습니다. 먼저 `python3 -m pip install pyswmm`로 설치하세요."
         ) from exc
     except Exception as exc:
-        raise PySwmmUnavailable(f"PySWMM import failed: {exc}") from exc
+        raise PySwmmUnavailable(f"PySWMM import 실패: {exc}") from exc
     return Simulation, Nodes, Links

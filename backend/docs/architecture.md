@@ -13,21 +13,21 @@ PySWMM 런타임 세션으로 실행한다. 엔진 snapshot은 HTTP 응답과 Ch
 WebSocket으로 전달된다.
 
 React 클라이언트와 FastAPI LangChain 서버는 외부 시스템이며 이 저장소에서
-구현하지 않는다. LangChain 호출은 현재 `swmm_engine/llm_dispatcher.py`의
-placeholder hook으로 남아 있고, 실제 HTTP 호출은 아직 연결되지 않았다.
+구현하지 않는다. 위험 snapshot에서 `llmTrigger.shouldTrigger=true`가 되면
+`swmm_engine/llm_dispatcher.py`가 LangChain 서버로 HTTP POST 요청을 보낸다.
 
 ## 구성도
 
 ```mermaid
 flowchart LR
-    Client[Vite + React Client]
-    HTTP[Django HTTP / Ninja APIs]
+    Client[Vite + React 클라이언트]
+    HTTP[Django HTTP / Ninja API]
     WS[Django Channels Consumer]
     FacilityDB[(Django ORM Facility)]
     RunDB[(Django ORM SimulationRun)]
-    Engine[SWMM Engine Interface]
+    Engine[SWMM 엔진 인터페이스]
     PySWMM[PySWMM 2.1.0]
-    INP[Generated SWMM INP]
+    INP[생성된 SWMM INP]
     LangChain[FastAPI + LangChain]
 
     Client -->|HTTP JSON| HTTP
@@ -41,7 +41,7 @@ flowchart LR
     Runtime --> Risk
     Runtime --> Logs
     Runtime -->|snapshot broadcast| WS
-    Risk -.->|향후 분석 요청| LLM
+    Risk -->|위험 context POST| LLM
 ```
 
 ## 모듈 책임
@@ -57,8 +57,8 @@ flowchart LR
 | `swmm_engine/converter` | React editor layout JSON을 SWMM INP/report/mapping으로 변환 |
 | `swmm_engine/engine` | PySWMM 세션 생성, tick loop, pause/resume/stop/control 처리 |
 | `swmm_engine/risk` | snapshot 구조 검증, deterministic 위험 이벤트 판정, LLM context 생성 |
-| `swmm_engine/llm_dispatcher.py` | 위험 snapshot을 외부 LLM 서버로 보낼 future hook |
-| `legacy` | 예전 `/api/simulations/` 흐름과 테스트 보관 |
+| `swmm_engine/llm_dispatcher.py` | 위험 snapshot을 외부 LLM 서버로 POST하고 dispatch log 기록 |
+| `legacy` | 협업 전 임시 `/api/simulations/` 흐름 보관 |
 | `backend/docs` | 현재 구현 기준 기술 문서 |
 
 ## 주요 처리 흐름
@@ -74,6 +74,10 @@ flowchart LR
    HTTP `/api` 요청에서 access token을 검증한다.
 5. `POST /api/auth/refresh`는 refresh cookie와 DB에 저장된 hash를 비교하고,
    성공 시 access/refresh token을 모두 rotation한다.
+
+초기 ADMIN 생성은 `ensure_admin_user --only-if-no-admin`로 수행한다. 기본
+`admin` row가 이미 있으면 삭제 후 기본 비밀번호 `tnvjakfldh4`로 다시 생성하고,
+다른 ADMIN 사용자가 이미 있으면 건너뛴다.
 
 ### 시나리오 저장
 
@@ -108,6 +112,15 @@ flowchart LR
    `summary`, `risk`, `llmTrigger`를 포함한 snapshot을 만든다.
 7. `apps/simulation/state.py`가 snapshot을 Channels group `simulation`으로 broadcast한다.
 8. snapshot은 JSONL tick log에도 기록된다.
+9. 위험 trigger가 발생하면 `llm_dispatcher`가 다음 payload를
+   `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다.
+
+```json
+{
+  "id": "폭우",
+  "swmm_raw_data": "{...sanitized context json...}"
+}
+```
 
 ## SWMM 교체 지점
 

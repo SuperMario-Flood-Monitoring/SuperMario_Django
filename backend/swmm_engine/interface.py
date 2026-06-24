@@ -58,7 +58,7 @@ ContextLevel = Literal["optimal", "medium", "full"]
 
 - optimal: 알림/요약에 필요한 최소 위험 이벤트와 전역 요약 중심.
 - medium: optimal + 주요 비정상 node/link/editor object와 관련 상태.
-- full: medium + raw snapshot 전체. 비용은 크지만 디버깅에는 가장 풍부하다.
+- full: medium + 원본 snapshot 전체. 비용은 크지만 디버깅에는 가장 풍부하다.
 """
 
 
@@ -83,7 +83,7 @@ def convert_layout_to_inp(
     - title: 생성될 INP의 [TITLE]에 들어갈 설명.
     - scale_m_per_px: React 좌표 1px을 몇 m로 해석할지 정하는 값.
       기본값은 기존 converter의 DEFAULT_SCALE_M_PER_PX를 따른다.
-    - map_height: SWMM map 좌표 변환에 쓰는 fallback 높이.
+    - map_height: SWMM map 좌표 변환에 쓰는 대체 높이.
     - base_ground_elevation_m: 지표면 기준 고도.
 
     반환:
@@ -113,7 +113,7 @@ def convert_layout_to_inp(
 
 
 def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """SWMM runtime snapshot이 위험 감지/LLM 분석에 쓸 수 있는 형태인지 검증한다.
+    """SWMM 런타임 snapshot이 위험 감지/LLM 분석에 쓸 수 있는 형태인지 검증한다.
 
     Django에서 쓰는 위치:
     - 엔진에서 1초 tick 결과를 받은 직후.
@@ -142,7 +142,7 @@ def detect_risks(
     *,
     policy_level: str | None = None,
 ) -> dict[str, Any]:
-    """SWMM snapshot에서 위험 이벤트를 deterministic rule로 감지한다.
+    """SWMM snapshot에서 위험 이벤트를 결정적 rule로 감지한다.
 
     Django에서 쓰는 위치:
     - 매 tick마다 snapshot을 받은 뒤 즉시 호출.
@@ -196,7 +196,7 @@ def build_llm_context(
 
     중요한 원칙:
     - LLM이 수치 기반 위험 판정을 새로 하게 만들지 않는다.
-    - 위험 판정은 detect_risks가 deterministic하게 끝낸다.
+    - 위험 판정은 detect_risks가 결정적으로 끝낸다.
     - LLM에는 위험 이벤트, 관련 객체, 전체 상태 요약, 시스템 프롬프트에
       필요한 context만 넘긴다.
 

@@ -6,11 +6,11 @@ from django.core.management.base import BaseCommand, CommandError
 from apps.auth.models import User
 
 DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "수퍼마리오4"
+DEFAULT_ADMIN_PASSWORD = "tnvjakfldh4"
 
 
 class Command(BaseCommand):
-    help = "Create or update the initial ADMIN account for the custom auth table."
+    help = "커스텀 auth 테이블의 초기 ADMIN 계정을 생성하거나 갱신한다."
 
     def add_arguments(self, parser):
         parser.add_argument("--username")
@@ -18,14 +18,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--only-if-no-admin",
             action="store_true",
-            help="Skip without changes when any ADMIN user already exists.",
+            help="이미 ADMIN 사용자가 있으면 변경 없이 건너뛴다.",
         )
 
     def handle(self, *args, **options):
-        if options["only_if_no_admin"] and User.objects.filter(role=User.Role.ADMIN).exists():
-            self.stdout.write(self.style.SUCCESS("ADMIN user already exists. Skipped."))
-            return
-
         username = str(
             options["username"]
             or os.getenv("SUPERMARIO_INITIAL_ADMIN_USERNAME")
@@ -37,9 +33,22 @@ class Command(BaseCommand):
             or DEFAULT_ADMIN_PASSWORD
         )
         if not username:
-            raise CommandError("--username is required.")
+            raise CommandError("--username이 필요합니다.")
         if not password:
-            raise CommandError("--password is required.")
+            raise CommandError("--password가 필요합니다.")
+
+        existing_default_admin = User.objects.filter(username=username, role=User.Role.ADMIN)
+        should_recreate_default_admin = existing_default_admin.exists()
+        if should_recreate_default_admin:
+            existing_default_admin.delete()
+
+        if (
+            options["only_if_no_admin"]
+            and not should_recreate_default_admin
+            and User.objects.filter(role=User.Role.ADMIN).exists()
+        ):
+            self.stdout.write(self.style.SUCCESS("ADMIN 사용자가 이미 있어 건너뜁니다."))
+            return
 
         user, created = User.objects.update_or_create(
             username=username,
@@ -49,5 +58,5 @@ class Command(BaseCommand):
                 "refresh_token": None,
             },
         )
-        action = "Created" if created else "Updated"
-        self.stdout.write(self.style.SUCCESS(f"{action} ADMIN user {user.username}."))
+        action = "생성" if created else "갱신"
+        self.stdout.write(self.style.SUCCESS(f"ADMIN 사용자 {user.username} {action} 완료."))

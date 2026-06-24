@@ -6,7 +6,7 @@ from ninja import Schema
 from pydantic import ConfigDict, model_validator
 
 
-DEFAULT_EDITOR_CONVERT_TITLE = "SWMM model generated from React editor layout"
+DEFAULT_EDITOR_CONVERT_TITLE = "React editor layout에서 생성한 SWMM model"
 
 
 class EditorConvertRequest(Schema):
@@ -23,7 +23,7 @@ class EditorConvertRequest(Schema):
             extras.pop("title", None)
             extras.pop("filename", None)
             if not extras:
-                raise ValueError("layout must be a JSON object.")
+                raise ValueError("layout은 JSON object여야 합니다.")
             self.layout = extras
         return self
 

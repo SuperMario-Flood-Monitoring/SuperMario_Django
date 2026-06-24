@@ -1,20 +1,19 @@
-"""Future SuperMario_LLM dispatch hook for SWMM risk snapshots.
-
-This module intentionally does not call the LLM server yet. It marks the exact
-place where the Django service should hand off a triggered SWMM context packet
-to SuperMario_LLM once that API contract is ready.
-"""
+"""SWMM 위험 snapshot을 SuperMario_LLM으로 전달하는 hook."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import urllib.error
+import urllib.request
 from collections import deque
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from django.conf import settings
 
 
 logger = logging.getLogger(__name__)
@@ -46,11 +45,7 @@ _scheduled_dispatch_key_order: deque[str] = deque()
 
 
 def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
-    """Schedule a future LLM analysis call when a snapshot asks for it.
-
-    현재 구현은 실제 HTTP 호출을 하지 않는다. 다만 WebSocket broadcast 직전에
-    이 함수를 호출하면, 나중에 `dispatch_llm_analysis()` 안에 SuperMario_LLM
-    API 호출만 채워 넣으면 된다.
+    """snapshot이 요청한 경우 LLM 분석 호출을 예약한다.
 
     반환:
     - True: 이번 snapshot은 LLM dispatch 대상이라 background task로 예약됨.
@@ -63,7 +58,7 @@ def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
 
     context = trigger.get("context")
     if not isinstance(context, Mapping):
-        logger.warning("LLM trigger was set but context payload is missing.")
+        logger.warning("LLM trigger가 설정되었지만 context payload가 없습니다.")
         return False
     sanitized_context = sanitize_llm_context(context)
 
@@ -73,7 +68,7 @@ def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
 
     append_llm_dispatch_log(payload, trigger, sanitized_context, dispatch_key)
     logger.warning(
-        "LLM would-dispatch. dispatchKey=%s runId=%s stepIndex=%s reason=%s issues=%s",
+        "LLM dispatch 예약됨. dispatchKey=%s runId=%s stepIndex=%s reason=%s issues=%s",
         dispatch_key,
         payload.get("runId"),
         payload.get("stepIndex"),
@@ -90,40 +85,117 @@ async def dispatch_llm_analysis(
     context: Mapping[str, Any],
     dispatch_key: str,
 ) -> dict[str, Any]:
-    """Future SuperMario_LLM API call location.
+    """trigger된 SWMM context를 LangChain 서버로 POST한다."""
 
-    실제 연결 시 이 함수 안에서 아래 순서로 처리하면 된다.
-    1. `context`를 SuperMario_LLM `/analyze` 같은 endpoint로 POST한다.
-    2. 실패하면 logger/DB/job retry 정책으로 남긴다.
+    request_payload = build_langchain_request_payload(snapshot, trigger, context)
+    try:
+        result = await asyncio.to_thread(post_langchain_request, request_payload)
+    except Exception as exc:  # pragma: no cover - dispatch failure must not stop simulation
+        logger.warning(
+            "LLM dispatch 실패. dispatchKey=%s runId=%s stepIndex=%s error=%s",
+            dispatch_key,
+            snapshot.get("runId"),
+            snapshot.get("stepIndex"),
+            exc,
+        )
+        append_llm_dispatch_result_log(
+            snapshot,
+            trigger,
+            dispatch_key,
+            status="send_failed",
+            detail={"error": f"{exc.__class__.__name__}: {exc}"},
+        )
+        return {
+            "ok": False,
+            "status": "send_failed",
+            "dispatchKey": dispatch_key,
+            "targetUrl": settings.SUPERMARIO_LLM_ANALYZE_URL,
+        }
 
-    예시:
-
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                settings.SUPERMARIO_LLM_ANALYZE_URL,
-                json={"context": context},
-            )
-            response.raise_for_status()
-    """
-
-    logger.debug(
-        "LLM dispatch placeholder. dispatchKey=%s runId=%s stepIndex=%s reason=%s contextKeys=%s",
+    append_llm_dispatch_result_log(
+        snapshot,
+        trigger,
         dispatch_key,
-        snapshot.get("runId"),
-        snapshot.get("stepIndex"),
-        trigger.get("reason"),
-        sorted(context.keys()),
+        status="sent",
+        detail=result,
     )
     return {
         "ok": True,
-        "status": "placeholder_not_sent",
+        "status": "sent",
         "dispatchKey": dispatch_key,
-        "targetService": "SuperMario_LLM",
+        "targetUrl": settings.SUPERMARIO_LLM_ANALYZE_URL,
+        **result,
     }
 
 
+def build_langchain_request_payload(
+    snapshot: Mapping[str, Any],
+    trigger: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> dict[str, Any]:
+    """LEVEL 10 LangChain 요청 형식을 만든다."""
+
+    situation_id = extract_situation_id(snapshot, trigger, context)
+    return {
+        "id": situation_id,
+        "swmm_raw_data": json.dumps(context, ensure_ascii=False, separators=(",", ":")),
+    }
+
+
+def extract_situation_id(
+    snapshot: Mapping[str, Any],
+    trigger: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> str:
+    """React가 부여한 상황 id를 찾고, 없으면 위험 metadata로 fallback한다."""
+
+    control = snapshot.get("control")
+    if isinstance(control, Mapping):
+        for key in ("id", "situationId", "scenarioId", "reason"):
+            value = control.get(key)
+            if value not in (None, ""):
+                return str(value)
+
+    simulation = context.get("simulation")
+    if isinstance(simulation, Mapping):
+        nested_control = simulation.get("control")
+        if isinstance(nested_control, Mapping):
+            for key in ("id", "situationId", "scenarioId", "reason"):
+                value = nested_control.get(key)
+                if value not in (None, ""):
+                    return str(value)
+
+    return str(trigger.get("reason") or context.get("highestSeverity") or "risk")
+
+
+def post_langchain_request(request_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """runtime dependency 추가를 피하기 위해 stdlib urllib로 요청을 보낸다."""
+
+    target_url = settings.SUPERMARIO_LLM_ANALYZE_URL
+    body = json.dumps(request_payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        target_url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            response_body = response.read().decode("utf-8", errors="replace")
+            return {
+                "httpStatus": response.status,
+                "responseBody": response_body[:2000],
+            }
+    except urllib.error.HTTPError as exc:
+        response_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"LLM 서버가 HTTP {exc.code}를 반환했습니다: {response_body[:500]}") from exc
+
+
 def sanitize_llm_context(value: Any) -> Any:
-    """Return a copy of LLM context without local paths or debug export metadata."""
+    """local path와 debug export metadata를 제거한 LLM context copy를 반환한다."""
 
     if isinstance(value, Mapping):
         sanitized = {}
@@ -150,14 +222,14 @@ def append_llm_dispatch_log(
     context: Mapping[str, Any],
     dispatch_key: str,
 ) -> None:
-    """Write one local JSONL record for every would-call trigger."""
+    """호출 대상 trigger마다 local JSONL record 하나를 기록한다."""
 
     try:
         LLM_DISPATCH_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "loggedAt": datetime.now().isoformat(timespec="milliseconds"),
             "dispatchKey": dispatch_key,
-            "status": "placeholder_not_sent",
+            "status": "scheduled",
             "runId": payload.get("runId"),
             "stepIndex": payload.get("stepIndex"),
             "modelTime": payload.get("modelTime"),
@@ -171,11 +243,40 @@ def append_llm_dispatch_log(
         with LLM_DISPATCH_LOG_PATH.open("a", encoding="utf-8") as log_file:
             log_file.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
     except Exception as exc:  # pragma: no cover - local logging must not stop simulation
-        logger.warning("Failed to write LLM dispatch placeholder log: %s", exc)
+        logger.warning("LLM dispatch 예약 log 기록 실패: %s", exc)
+
+
+def append_llm_dispatch_result_log(
+    payload: Mapping[str, Any],
+    trigger: Mapping[str, Any],
+    dispatch_key: str,
+    *,
+    status: str,
+    detail: Mapping[str, Any],
+) -> None:
+    """실제 dispatch 결과 JSONL record 하나를 기록한다."""
+
+    try:
+        LLM_DISPATCH_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "loggedAt": datetime.now().isoformat(timespec="milliseconds"),
+            "dispatchKey": dispatch_key,
+            "status": status,
+            "runId": payload.get("runId"),
+            "stepIndex": payload.get("stepIndex"),
+            "modelTime": payload.get("modelTime"),
+            "reason": trigger.get("reason"),
+            "targetUrl": settings.SUPERMARIO_LLM_ANALYZE_URL,
+            "detail": dict(detail),
+        }
+        with LLM_DISPATCH_LOG_PATH.open("a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except Exception as exc:  # pragma: no cover - local logging must not stop simulation
+        logger.warning("LLM dispatch 결과 log 기록 실패: %s", exc)
 
 
 def summarize_triggered_issues(trigger: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Return compact issue details for console/file logs."""
+    """console/file log에 남길 간결한 issue detail을 반환한다."""
 
     issues: list[dict[str, Any]] = []
     for issue in trigger.get("triggeredIssues") or []:
@@ -197,7 +298,7 @@ def summarize_triggered_issues(trigger: Mapping[str, Any]) -> list[dict[str, Any
 
 
 def build_llm_dispatch_key(payload: Mapping[str, Any], trigger: Mapping[str, Any]) -> str:
-    """Build an idempotency key for one logical LLM trigger."""
+    """논리적 LLM trigger 하나에 대한 idempotency key를 만든다."""
 
     issue_parts: list[str] = []
     for issue in trigger.get("triggeredIssues") or []:
@@ -223,7 +324,7 @@ def build_llm_dispatch_key(payload: Mapping[str, Any], trigger: Mapping[str, Any
 
 
 def remember_dispatch_key(dispatch_key: str) -> bool:
-    """Remember a dispatch key and return False when it was already seen."""
+    """dispatch key를 기억하고 이미 본 key이면 False를 반환한다."""
 
     if dispatch_key in _scheduled_dispatch_keys:
         return False

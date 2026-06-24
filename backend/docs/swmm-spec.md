@@ -7,7 +7,7 @@
 - 출력 형식: JSON
 - 엔진: PySWMM 2.1.0 / EPA SWMM 5.2.4
 - 단위계: SI
-- Source of truth: SWMM runtime snapshot
+- 기준 데이터: SWMM 런타임 snapshot
 
 ## 입력 원칙
 
@@ -111,7 +111,7 @@ converter는 layout을 다음 묶음으로 변환한다.
 | `medium` | 0.60 m |
 | `large` | 1.00 m |
 
-## Runtime Control
+## 런타임 제어값
 
 엔진 시작 payload 또는 `/api/engine/control`로 제어값을 전달한다.
 
@@ -139,7 +139,7 @@ converter는 layout을 다음 묶음으로 변환한다.
 
 ## Snapshot 공통 구조
 
-엔진 snapshot은 HTTP start/control 응답과 WebSocket broadcast에 사용된다.
+엔진 snapshot은 HTTP start/control 응답과 웹소켓 broadcast에 사용된다.
 
 ```json
 {
@@ -164,7 +164,7 @@ converter는 layout을 다음 묶음으로 변환한다.
 }
 ```
 
-## Node State
+## Node 상태
 
 ```json
 {
@@ -196,7 +196,7 @@ converter는 layout을 다음 묶음으로 변환한다.
 | `totalInflowCms` | m3/s | 총 유입량 |
 | `floodingCms` | m3/s | 월류량 |
 
-## Link State
+## Link 상태
 
 ```json
 {
@@ -234,7 +234,7 @@ converter는 layout을 다음 묶음으로 변환한다.
 | `blockageRatio` | ratio | 막힘 비율 |
 | `direction` | string | `forward` 또는 `reverse` |
 
-## Editor Object State
+## Editor Object 상태
 
 React editor 객체 하나가 여러 SWMM 객체로 분해될 수 있어 editor 객체별 집계값을
 제공한다.
@@ -279,12 +279,25 @@ React editor 객체 하나가 여러 SWMM 객체로 분해될 수 있어 editor 
 context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역 상태 요약,
 정책, raw snapshot 참조 경로를 담는다.
 
-현재 `llm_dispatcher`는 실제 SuperMario_LLM HTTP 호출을 수행하지 않는다. 향후
-`dispatch_llm_analysis()`에 `/analyze` 호출, retry, 로그 정책을 연결해야 한다.
+`llm_dispatcher`는 `llmTrigger.shouldTrigger=true`인 snapshot에서 sanitized
+context를 만들고 `SUPERMARIO_LLM_ANALYZE_URL`로 HTTP POST를 보낸다. 요청 형식은
+다음과 같다.
+
+```json
+{
+  "id": "폭우",
+  "swmm_raw_data": "{...sanitized context json...}"
+}
+```
+
+`id`는 React가 제어 payload에 넣은 `id`, `situationId`, `scenarioId`, `reason`
+순서로 찾는다. 없으면 trigger reason 또는 highest severity를 fallback으로 쓴다.
+`swmm_raw_data`는 로컬 파일 경로와 debug export metadata가 제거된 context JSON
+문자열이다.
 
 ## JSONL Tick Log
 
-각 runtime session은 다음 경로에 tick log를 남긴다.
+각 런타임 세션은 다음 경로에 tick log를 남긴다.
 
 ```text
 backend/swmm_engine/logs/runtime-tick-logs/swmm-runtime-{runId}.jsonl
@@ -293,7 +306,7 @@ backend/swmm_engine/logs/runtime-tick-logs/swmm-runtime-{runId}.jsonl
 각 줄은 JSON 객체이며 snapshot 또는 runtime event를 담는다. 이 파일은 런타임
 산출물이므로 Git 추적 대상이 아니다.
 
-## Legacy 명세
+## 이전 명세
 
 예전 문서에 있던 `swmm-section-v1`, `facilities` 배열 기반 최종 출력,
 `SimulationRun` 저장 흐름은 `legacy/apps_simulation_legacy`에 남은 테스트용

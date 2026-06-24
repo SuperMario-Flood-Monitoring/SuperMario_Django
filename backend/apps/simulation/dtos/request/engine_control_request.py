@@ -16,6 +16,10 @@ class EngineControlRequest(Schema):
     speedMultiplier: Optional[float] = None
     blockagesById: Optional[Dict[str, Any]] = None
     exceptions: Optional[List[Dict[str, Any]]] = None
+    id: Optional[str] = None
+    situationId: Optional[str] = None
+    scenarioId: Optional[str] = None
+    reason: Optional[str] = None
 
     def to_control_payload(self) -> Dict[str, Any]:
         return self.model_dump(by_alias=True, exclude_none=True)

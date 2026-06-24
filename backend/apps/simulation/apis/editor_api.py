@@ -14,7 +14,7 @@ from ..dtos import EditorConvertRequest, EditorConvertResponse, ErrorResponse
 
 
 editor_api = NinjaAPI(
-    title="SWMM Editor API",
+    title="SWMM 에디터 API",
     version="1.0.0",
     urls_namespace="swmm_editor_api",
 )

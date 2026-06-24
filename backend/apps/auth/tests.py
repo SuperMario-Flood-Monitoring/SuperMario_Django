@@ -97,8 +97,42 @@ class EnsureAdminUserCommandTests(TestCase):
 
         user = User.objects.get(username="admin")
         self.assertEqual(user.role, User.Role.ADMIN)
-        self.assertTrue(check_password("수퍼마리오4", user.password))
-        self.assertIn("Created ADMIN user admin.", stdout.getvalue())
+        self.assertTrue(check_password("tnvjakfldh4", user.password))
+        self.assertIn("ADMIN 사용자 admin 생성 완료.", stdout.getvalue())
+
+    def test_recreates_existing_default_admin(self):
+        User.objects.create(
+            username="admin",
+            role=User.Role.ADMIN,
+            password=make_password("old-password"),
+        )
+        stdout = StringIO()
+
+        call_command("ensure_admin_user", "--only-if-no-admin", stdout=stdout)
+
+        user = User.objects.get(username="admin")
+        self.assertTrue(check_password("tnvjakfldh4", user.password))
+        self.assertIn("ADMIN 사용자 admin 생성 완료.", stdout.getvalue())
+
+    def test_recreates_default_admin_even_when_other_admin_exists(self):
+        User.objects.create(
+            username="admin",
+            role=User.Role.ADMIN,
+            password=make_password("old-password"),
+        )
+        User.objects.create(
+            username="root",
+            role=User.Role.ADMIN,
+            password=make_password("root-password"),
+        )
+        stdout = StringIO()
+
+        call_command("ensure_admin_user", "--only-if-no-admin", stdout=stdout)
+
+        user = User.objects.get(username="admin")
+        self.assertTrue(check_password("tnvjakfldh4", user.password))
+        self.assertTrue(User.objects.filter(username="root").exists())
+        self.assertIn("ADMIN 사용자 admin 생성 완료.", stdout.getvalue())
 
     def test_skips_default_admin_when_admin_exists(self):
         existing = User.objects.create(
@@ -113,4 +147,4 @@ class EnsureAdminUserCommandTests(TestCase):
         existing.refresh_from_db()
         self.assertTrue(check_password("keep-this-password", existing.password))
         self.assertFalse(User.objects.filter(username="admin").exists())
-        self.assertIn("ADMIN user already exists. Skipped.", stdout.getvalue())
+        self.assertIn("ADMIN 사용자가 이미 있어 건너뜁니다.", stdout.getvalue())

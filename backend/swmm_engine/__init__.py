@@ -1,4 +1,4 @@
-"""Django-facing SWMM package."""
+"""Django에서 사용하는 SWMM 공개 패키지."""
 
 from .interface import (
     apply_controls,

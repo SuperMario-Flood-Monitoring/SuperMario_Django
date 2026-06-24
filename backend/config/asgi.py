@@ -1,10 +1,7 @@
-"""
-ASGI config for config project.
+"""Django ASGI 설정.
 
-It exposes the ASGI callable as a module-level variable named ``application``.
-
-For more information on this file, see
-https://docs.djangoproject.com/en/6.0/howto/deployment/asgi/
+이 파일은 ASGI callable을 모듈 수준의 ``application`` 변수로 노출한다.
+자세한 내용은 Django 공식 ASGI 배포 문서를 참고한다.
 """
 
 import os

@@ -1,4 +1,4 @@
-# Backend Directory
+# 백엔드 디렉터리
 
 이 폴더는 SuperMario SWMM Django 백엔드의 실제 Django 프로젝트 루트입니다.
 
