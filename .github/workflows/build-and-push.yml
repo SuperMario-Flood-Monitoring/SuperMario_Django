@@ -60,21 +60,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trigger infra deploy workflow
+      - name: Notify infra repository
         if: ${{ env.INFRA_DISPATCH_TOKEN != '' }}
-        env:
-          INFRA_DISPATCH_TOKEN: ${{ env.INFRA_DISPATCH_TOKEN }}
-          INFRA_REPOSITORY: ${{ env.INFRA_REPOSITORY }}
-          SERVICE_NAME: ${{ env.SERVICE_NAME }}
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          TAG: ${{ github.sha }}
-        run: |
-          curl -fsS -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${INFRA_DISPATCH_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${INFRA_REPOSITORY}/actions/workflows/deploy-prod.yml/dispatches" \
-            -d "$(printf '{"ref":"prod","inputs":{"service":"%s","image":"%s","tag":"%s"}}' "$SERVICE_NAME" "$IMAGE" "$TAG")"
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ env.INFRA_DISPATCH_TOKEN }}
+          repository: ${{ env.INFRA_REPOSITORY }}
+          event-type: service-image-published
+          client-payload: >-
+            {
+              "service": "${{ env.SERVICE_NAME }}",
+              "image": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}",
+              "tag": "${{ github.sha }}",
+              "source_repo": "${{ github.repository }}",
+              "source_branch": "${{ github.ref_name }}",
+              "source_sha": "${{ github.sha }}"
+            }
 
       - name: Notify Telegram
         if: always()
