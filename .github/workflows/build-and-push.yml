@@ -101,6 +101,13 @@ jobs:
             exit 0
           fi
 
+          BOT_TOKEN="$(printf '%s' "$BOT_TOKEN" | tr -d '\r\n')"
+          CHAT_ID="$(printf '%s' "$CHAT_ID" | tr -d '[:space:]')"
+          BOT_TOKEN="${BOT_TOKEN%\"}"; BOT_TOKEN="${BOT_TOKEN#\"}"
+          BOT_TOKEN="${BOT_TOKEN%\'}"; BOT_TOKEN="${BOT_TOKEN#\'}"
+          CHAT_ID="${CHAT_ID%\"}"; CHAT_ID="${CHAT_ID#\"}"
+          CHAT_ID="${CHAT_ID%\'}"; CHAT_ID="${CHAT_ID#\'}"
+
           case "$STATUS" in
             success) STATUS_LABEL="성공"; STATUS_ICON="✅" ;;
             failure) STATUS_LABEL="실패"; STATUS_ICON="❌" ;;
@@ -127,7 +134,15 @@ jobs:
             "${EXTRA_LABEL}:" \
             "${EXTRA_URL}")
 
-          curl -fsS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d chat_id="${CHAT_ID}" \
-            --data-urlencode text="$MESSAGE" \
-            || echo "Telegram notification failed."
+          RESPONSE_FILE="${RUNNER_TEMP}/telegram-response.json"
+          HTTP_CODE=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
+            -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" \
+            -d "disable_web_page_preview=true" \
+            --data-urlencode "text=${MESSAGE}" \
+            || true)
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Telegram notification failed with HTTP ${HTTP_CODE}."
+            cat "$RESPONSE_FILE" || true
+          fi
