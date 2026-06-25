@@ -128,20 +128,23 @@ flowchart LR
    `event_key=runId:hazard_type:target_id:hazard_level`로 같은 실행의 중복 위험
    로그 생성을 방지한다.
 11. `apps.monitoring.services.forecast_state`는 broadcast snapshot에서 예측에
-   필요한 최소 metric만 runtime 메모리 buffer에 저장한다.
-12. 최근 관측 구간의 변화량으로 기본 10분 뒤 상태를 예측한다. forecast 결과에
-   `CRITICAL` 이벤트가 있으면 `llm_dispatcher`가 bot token과 수신자 chat ID를
-   조회해 forecast context를 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다. 즉 LLM
-   분석 요청 기준은 현재 위험 발생이 아니라 10분 뒤 위험 예측이다.
+   필요한 최소 metric만 runtime 메모리 buffer에 저장한다. 수위 변화량 metric과
+   함께 React 제어에서 들어온 `links.blockageRatio`도 저장한다.
+12. 최근 관측 구간의 변화량으로 기본 10분 뒤 상태를 예측한다. 시작 직후의
+   0 기반 과대 예측을 줄이기 위해 최소 관측 시간과 강수 상황별 최소 현재값을
+   만족한 metric만 위험 이벤트로 만든다. 단, 관 막힘은 사용자가 시뮬레이션 중
+   변경한 현재 제어 상태이므로 `blockageRatio >= 1.0`이면 관측 안정화 시간
+   전에도 CRITICAL forecast event로 만든다. forecast 결과에 `CRITICAL` 이벤트가
+   있으면 `llm_dispatcher`가 bot token과 수신자 chat ID를 조회해 forecast
+   context를 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다. 즉 LLM 분석 요청 기준은
+   현재 위험 발생이 아니라 10분 뒤 위험 예측 또는 직접 제어된 막힘 위험이다.
 
 ```json
 {
   "id": "폭우",
   "swmm_raw_data": "{...sanitized context json...}",
-  "notification": {
-    "bot_token": "...",
-    "target": ["..."]
-  }
+  "TELEGRAM_BOT_TOKEN": "...",
+  "TELEGRAM_CHAT_ID": ["..."]
 }
 ```
 
@@ -172,14 +175,25 @@ flowchart LR
 1. `state.broadcast()`가 모든 snapshot을 `forecast_state.record_snapshot()`에
    전달한다.
 2. forecast state는 전체 snapshot을 저장하지 않고 `links.fullness`,
-   `links.capacityRatio`, `nodes.depthRatio`, `nodes.floodingCms` 같은 최소 metric만
-   최근 `SUPERMARIO_FORECAST_BUFFER_SECONDS` 동안 메모리에 유지한다.
+   `links.capacityRatio`, `links.blockageRatio`, `nodes.depthRatio`,
+   `nodes.floodingCms` 같은 최소 metric만 최근
+   `SUPERMARIO_FORECAST_BUFFER_SECONDS` 동안 메모리에 유지한다.
 3. `GET /api/hazards/forecast?minutes=10`은 최근
-   `SUPERMARIO_FORECAST_WINDOW_SECONDS`초의 변화량을 기준으로 미래 값을 선형
-   외삽한다.
-4. 예측 결과의 `WARNING/CRITICAL` 이벤트는 React가 표시할 수 있고,
+   `SUPERMARIO_FORECAST_WINDOW_SECONDS`초 안의 sample 기울기 중앙값을 기준으로
+   미래 값을 외삽한다.
+4. `SUPERMARIO_FORECAST_MIN_OBSERVATION_SECONDS`보다 관측 구간이 짧으면 변화량
+   기반 metric은 `NORMAL` forecast를 반환하고 LLM dispatch payload를 만들지
+   않는다. `links.blockageRatio`는 제어 상태 자체가 위험 신호이므로 이 안정화
+   조건의 예외다.
+5. 맑음/약한비/폭우의 `rainfallRatio`에 따라 최소 현재 수위 기준을 다르게
+   적용한다. 예측값이 `CRITICAL` 기준 이상이어도 현재값이 너무 낮으면
+   위험 이벤트로 만들지 않는다.
+6. `links.blockageRatio >= 1.0`은 `PREDICTED_BLOCKAGE_CLOSED` CRITICAL,
+   `0.8 <= links.blockageRatio < 1.0`은 `PREDICTED_BLOCKAGE_HIGH` WARNING으로
+   만든다.
+7. 예측 결과의 `WARNING/CRITICAL` 이벤트는 React가 표시할 수 있고,
    `CRITICAL` 예측은 LLM dispatch의 입력 기준으로 사용된다.
-5. 이 1차 구현은 단일 프로세스 runtime state 기반이다. 서버 재시작 또는 다중
+8. 이 1차 구현은 단일 프로세스 runtime state 기반이다. 서버 재시작 또는 다중
    프로세스 배포에서는 예측 buffer가 공유되지 않는다.
 
 ## SWMM 교체 지점

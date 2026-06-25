@@ -69,11 +69,11 @@ class NotificationPayloadTests(TestCase):
 
         payload = build_notification_payload()
 
-        self.assertEqual(payload["bot_token"], "plain-bot-token")
-        self.assertEqual(payload["target"], ["12345", "67890"])
+        self.assertEqual(payload["TELEGRAM_BOT_TOKEN"], "plain-bot-token")
+        self.assertEqual(payload["TELEGRAM_CHAT_ID"], ["12345", "67890"])
 
     def test_builds_empty_notification_payload_without_rows(self):
         payload = build_notification_payload()
 
-        self.assertIsNone(payload["bot_token"])
-        self.assertEqual(payload["target"], [])
+        self.assertIsNone(payload["TELEGRAM_BOT_TOKEN"])
+        self.assertEqual(payload["TELEGRAM_CHAT_ID"], [])

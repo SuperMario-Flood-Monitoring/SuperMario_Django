@@ -62,13 +62,14 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
         with patch.object(
             llm_dispatcher,
             "build_notification_payload",
-            return_value={"bot_token": "token", "target": ["chat-1"]},
+            return_value={"TELEGRAM_BOT_TOKEN": "token", "TELEGRAM_CHAT_ID": ["chat-1"]},
         ):
             payload = build_langchain_request_payload({}, {}, context)
 
         self.assertEqual(payload["id"], "약한비")
         self.assertEqual(json.loads(payload["swmm_raw_data"]), context)
-        self.assertEqual(payload["notification"], {"bot_token": "token", "target": ["chat-1"]})
+        self.assertEqual(payload["TELEGRAM_BOT_TOKEN"], "token")
+        self.assertEqual(payload["TELEGRAM_CHAT_ID"], ["chat-1"])
 
     def test_skips_dispatch_during_cooldown(self):
         first_payload = _llm_trigger_payload(step_index=1)
@@ -114,7 +115,7 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
             patch.object(
                 llm_dispatcher,
                 "build_langchain_request_payload_async",
-                new=AsyncMock(return_value={"id": "약한비", "swmm_raw_data": "{}", "notification": {}}),
+                new=AsyncMock(return_value={"id": "약한비", "swmm_raw_data": "{}", "TELEGRAM_BOT_TOKEN": None, "TELEGRAM_CHAT_ID": []}),
             ),
             patch.object(llm_dispatcher, "post_langchain_analysis", side_effect=TimeoutError("timed out")),
             patch.object(llm_dispatcher, "append_llm_dispatch_result_log") as append_result_log,

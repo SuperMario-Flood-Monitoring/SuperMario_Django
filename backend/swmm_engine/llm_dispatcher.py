@@ -269,7 +269,7 @@ def build_langchain_request_payload(
     return {
         "id": extract_situation_id(snapshot, trigger, context),
         "swmm_raw_data": json.dumps(context, ensure_ascii=False, separators=(",", ":")),
-        "notification": build_notification_payload(),
+        **build_notification_payload(),
     }
 
 
@@ -283,7 +283,7 @@ async def build_langchain_request_payload_async(
     return {
         "id": extract_situation_id(snapshot, trigger, context),
         "swmm_raw_data": json.dumps(context, ensure_ascii=False, separators=(",", ":")),
-        "notification": await asyncio.to_thread(build_notification_payload),
+        **await asyncio.to_thread(build_notification_payload),
     }
 
 
@@ -294,8 +294,8 @@ def build_notification_payload() -> dict[str, Any]:
 
     bot_token = BotToken.objects.order_by("id").first()
     return {
-        "bot_token": bot_token.bot_token if bot_token else None,
-        "target": list(NotificationRecipient.objects.order_by("id").values_list("chat_id", flat=True)),
+        "TELEGRAM_BOT_TOKEN": bot_token.bot_token if bot_token else None,
+        "TELEGRAM_CHAT_ID": list(NotificationRecipient.objects.order_by("id").values_list("chat_id", flat=True)),
     }
 
 

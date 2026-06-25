@@ -228,7 +228,12 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
 이 API는 DB나 JSONL 로그가 아니라 현재 Django runtime state의 메모리 buffer에
 쌓인 최근 snapshot 샘플을 기준으로 한다. 기본 horizon은
 `SUPERMARIO_FORECAST_MINUTES=10`이며, 최근
-`SUPERMARIO_FORECAST_WINDOW_SECONDS=120`초 변화량을 이용해 예측한다.
+`SUPERMARIO_FORECAST_WINDOW_SECONDS=120`초 변화량을 이용해 예측한다. 시작
+직후 과대 예측을 줄이기 위해 기본 `SUPERMARIO_FORECAST_MIN_OBSERVATION_SECONDS=60`
+초 이상의 관측 구간이 필요하며, 예측값이 위험 기준을 넘더라도 현재 수위가
+강수 상황별 최소 현재값보다 낮으면 위험 이벤트로 만들지 않는다. 단,
+`blockageRatio`는 React 제어에서 직접 들어오는 현재 막힘 상태이므로 최소 관측
+시간과 수위 최소 조건을 적용하지 않고 별도 위험 이벤트로 만든다.
 
 ```json
 {
@@ -252,6 +257,8 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
         "currentValue": 0.2,
         "predictedValue": 0.7,
         "slopePerSecond": 0.0008333333333333334,
+        "minCurrentValue": 0.05,
+        "rainfallLevel": "heavy",
         "forecastMinutes": 10
       },
       "reason": "10분 뒤 fullness 위험이 예측되었습니다."
@@ -262,7 +269,10 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
 ```
 
 현재 예측 대상 metric은 `links.fullness`, `links.capacityRatio`,
-`nodes.depthRatio`, `nodes.floodingCms`이다. 예측은 SWMM `stepIndex`와
+`links.blockageRatio`, `nodes.depthRatio`, `nodes.floodingCms`이다.
+`links.blockageRatio >= 1.0`은 `PREDICTED_BLOCKAGE_CLOSED` CRITICAL,
+`0.8 <= links.blockageRatio < 1.0`은 `PREDICTED_BLOCKAGE_HIGH` WARNING으로
+처리한다. 예측은 SWMM `stepIndex`와
 `stepSeconds`를 기준으로 한 모델 시간 기준이며, 브라우저/서버 벽시계 시간과
 다를 수 있다.
 

@@ -344,8 +344,72 @@ class ForecastStateTests(TestCase):
 
         self.assertIsNone(payload)
 
+    def test_does_not_predict_from_short_startup_window(self):
+        forecast_state.record_snapshot(_forecast_snapshot(step_index=1, fullness=0.0, rainfall_ratio=0.0))
+        forecast_state.record_snapshot(_forecast_snapshot(step_index=2, fullness=0.04, rainfall_ratio=0.0))
 
-def _forecast_snapshot(step_index: int, fullness: float) -> dict:
+        result = forecast_state.forecast(minutes=10)
+        payload = forecast_state.build_forecast_llm_payload(
+            _forecast_snapshot(step_index=2, fullness=0.04, rainfall_ratio=0.0),
+            result,
+        )
+
+        self.assertEqual(result["highestSeverity"], "NORMAL")
+        self.assertEqual(result["events"], [])
+        self.assertIn("Need at least", result["message"])
+        self.assertIsNone(payload)
+
+    def test_clear_weather_requires_higher_current_level_for_forecast_event(self):
+        forecast_state.record_snapshot(_forecast_snapshot(step_index=1, fullness=0.0, rainfall_ratio=0.0))
+        forecast_state.record_snapshot(_forecast_snapshot(step_index=121, fullness=0.15, rainfall_ratio=0.0))
+
+        result = forecast_state.forecast(minutes=10)
+        payload = forecast_state.build_forecast_llm_payload(
+            _forecast_snapshot(step_index=121, fullness=0.15, rainfall_ratio=0.0),
+            result,
+        )
+
+        self.assertEqual(result["highestSeverity"], "NORMAL")
+        self.assertEqual(result["events"], [])
+        self.assertIsNone(payload)
+
+    def test_heavy_rain_allows_forecast_event_with_lower_current_level(self):
+        forecast_state.record_snapshot(_forecast_snapshot(step_index=1, fullness=0.0, rainfall_ratio=3.0))
+        forecast_state.record_snapshot(_forecast_snapshot(step_index=121, fullness=0.15, rainfall_ratio=3.0))
+
+        result = forecast_state.forecast(minutes=10)
+
+        self.assertEqual(result["highestSeverity"], "CRITICAL")
+        self.assertEqual(result["events"][0]["eventType"], "PREDICTED_FULL_PIPE")
+        self.assertGreaterEqual(result["events"][0]["metrics"]["minCurrentValue"], 0.05)
+
+    def test_blockage_control_creates_critical_forecast_event_during_startup_window(self):
+        forecast_state.record_snapshot(_forecast_snapshot(step_index=1, fullness=0.0, rainfall_ratio=1.0))
+        forecast_state.record_snapshot(
+            _forecast_snapshot(step_index=2, fullness=0.0, rainfall_ratio=1.0, blockage_ratio=1.0)
+        )
+
+        result = forecast_state.forecast(minutes=10)
+        payload = forecast_state.build_forecast_llm_payload(
+            _forecast_snapshot(step_index=2, fullness=0.0, rainfall_ratio=1.0, blockage_ratio=1.0),
+            result,
+        )
+
+        self.assertEqual(result["highestSeverity"], "CRITICAL")
+        self.assertEqual(result["events"][0]["eventType"], "PREDICTED_BLOCKAGE_CLOSED")
+        self.assertEqual(result["events"][0]["sourceId"], "PIPE_1")
+        self.assertEqual(result["events"][0]["metrics"]["currentValue"], 1.0)
+        self.assertIn("Need at least", result["message"])
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["llmTrigger"]["context"]["riskEvents"][0]["eventType"], "PREDICTED_BLOCKAGE_CLOSED")
+
+
+def _forecast_snapshot(
+    step_index: int,
+    fullness: float,
+    rainfall_ratio: float = 3.0,
+    blockage_ratio: float = 0.0,
+) -> dict:
     return {
         "type": "tick",
         "ok": True,
@@ -353,7 +417,7 @@ def _forecast_snapshot(step_index: int, fullness: float) -> dict:
         "stepIndex": step_index,
         "stepSeconds": 1,
         "modelTime": f"2026-06-16T00:{step_index // 60:02d}:{step_index % 60:02d}",
-        "control": {"rainfallRatio": 3.0},
+        "control": {"rainfallRatio": rainfall_ratio},
         "nodes": {
             "NODE_1": {
                 "depthRatio": 0.1,
@@ -365,6 +429,7 @@ def _forecast_snapshot(step_index: int, fullness: float) -> dict:
                 "fullness": fullness,
                 "capacityRatio": 0.1,
                 "flowCms": 0.01,
+                "blockageRatio": blockage_ratio,
             }
         },
     }

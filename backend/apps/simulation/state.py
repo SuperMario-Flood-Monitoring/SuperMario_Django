@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from channels.layers import get_channel_layer
 
 from apps.monitoring.services.forecast_state import build_forecast_llm_payload, forecast, record_snapshot
@@ -33,7 +33,10 @@ async def broadcast(payload: dict[str, Any]) -> None:
     forecast_result = forecast()
 
     try:
-        await sync_to_async(create_hazard_events_from_swmm_tick, thread_sensitive=True)(payload)
+        await database_sync_to_async(
+            create_hazard_events_from_swmm_tick,
+            thread_sensitive=False,
+        )(payload)
     except Exception as exc:  # pragma: no cover - hazard logging must not stop simulation
         logger.warning("Hazard event creation failed: %s", exc)
 

@@ -289,10 +289,8 @@ context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역
 {
   "id": "약한비",
   "swmm_raw_data": "<LLM context JSON string>",
-  "notification": {
-    "bot_token": "<bot_token row의 bot_token>",
-    "target": ["<notification_recipients.chat_id>"]
-  }
+  "TELEGRAM_BOT_TOKEN": "<bot_token row의 bot_token>",
+  "TELEGRAM_CHAT_ID": ["<notification_recipients.chat_id>"]
 }
 ```
 
@@ -302,10 +300,10 @@ context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역
 명시 ID가 없으면 snapshot/context의 `rainfallRatio` 또는 `rainfallPercent`에서
 동일한 preset을 추론한다.
 
-`notification.bot_token`은 `bot_token` 테이블의 첫 row에서 원문으로 조회하고,
-`notification.target`은 `notification_recipients`의 모든 `chat_id`를 원문으로
-조회한다. `bot_token` row가 없으면 `bot_token`은 `null`, 대상자가 없으면
-`target`은 빈 배열이다.
+`TELEGRAM_BOT_TOKEN`은 `bot_token` 테이블의 첫 row에서 원문으로 조회하고,
+`TELEGRAM_CHAT_ID`는 `notification_recipients`의 모든 `chat_id`를 원문으로
+조회한다. `bot_token` row가 없으면 `TELEGRAM_BOT_TOKEN`은 `null`, 대상자가
+없으면 `TELEGRAM_CHAT_ID`는 빈 배열이다.
 
 LLM 발송은 위험한 수준의 이슈가 `LLM_DISPATCH_COOLDOWN_SECONDS` 동안 계속
 유지된 뒤에만 예약한다. 발송 뒤에도 같은 위험 이슈가 계속 유지되면 다시 같은
