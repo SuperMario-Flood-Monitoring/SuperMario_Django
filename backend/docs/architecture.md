@@ -24,24 +24,31 @@ flowchart LR
     HTTP[Django HTTP / Ninja API]
     WS[Django Channels Consumer]
     FacilityDB[(Django ORM Facility)]
-    RunDB[(Django ORM SimulationRun)]
+    ScenarioDB[(Django ORM Scenario)]
+    HazardDB[(Django ORM HazardEvent)]
     Engine[SWMM 엔진 인터페이스]
+    Interface[swmm_engine.interface]
+    Converter[Layout -> SWMM INP]
+    Runtime[Realtime SWMM Runtime]
+    Risk[Risk Detector]
+    Logs[Runtime/LLM JSONL Logs]
     PySWMM[PySWMM 2.1.0]
-    INP[생성된 SWMM INP]
     LangChain[FastAPI + LangChain]
 
     Client -->|HTTP JSON| HTTP
     Client <-->|WebSocket JSON| WS
     HTTP --> ScenarioDB
     HTTP --> FacilityDB
+    HTTP --> HazardDB
     HTTP --> Interface
     Interface --> Converter
     Converter --> Runtime
     Runtime --> PySWMM
     Runtime --> Risk
     Runtime --> Logs
+    Risk -->|CRITICAL event| HazardDB
     Runtime -->|snapshot broadcast| WS
-    Risk -->|위험 context POST| LLM
+    Risk -->|위험 context POST| LangChain
 ```
 
 ## 모듈 책임
@@ -52,6 +59,7 @@ flowchart LR
 | `apps/common`                   | dataclass 기반 공통 DTO                                                         |
 | `apps/auth`                     | JWT 로그인, refresh rotation, `/api` 보호 middleware, custom users table        |
 | `apps/facilities`               | 시설 기준값 저장용 class-based view와 모델                                      |
+| `apps/monitoring`               | CRITICAL 위험 로그 저장, 조치 입력, embedding 이력 관리                         |
 | `apps/notification`             | Telegram bot token과 알림 수신자 chat ID 관리                                  |
 | `apps/scenarios`                | React editor layout JSON 시나리오 CRUD                                          |
 | `apps/simulation`               | SWMM 엔진 API, 에디터 변환 API, WebSocket consumer, 전역 엔진 상태              |
@@ -113,8 +121,18 @@ flowchart LR
    `summary`, `risk`, `llmTrigger`를 포함한 snapshot을 만든다.
 7. `apps/simulation/state.py`가 snapshot을 Channels group `simulation`으로 broadcast한다.
 8. snapshot은 JSONL tick log에도 기록된다.
-9. 위험 이슈가 설정된 유지시간 동안 계속되면 `llm_dispatcher`가 bot token과
-   수신자 chat ID를 조회해 다음 payload를 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다.
+9. `apps/simulation/state.py`는 broadcast 직전에 snapshot의 `risk.events` 중
+   `severity=CRITICAL`인 이벤트를 `apps.monitoring`에 전달한다.
+10. `apps.monitoring`은 현재 프로젝트의 실제 risk event 키인 `eventType`,
+   `source`, `sourceId`, `severity`를 사용해 `HazardEvent`를 생성한다.
+   `event_key=runId:hazard_type:target_id:hazard_level`로 같은 실행의 중복 위험
+   로그 생성을 방지한다.
+11. `apps.monitoring.services.forecast_state`는 broadcast snapshot에서 예측에
+   필요한 최소 metric만 runtime 메모리 buffer에 저장한다.
+12. 최근 관측 구간의 변화량으로 기본 10분 뒤 상태를 예측한다. forecast 결과에
+   `CRITICAL` 이벤트가 있으면 `llm_dispatcher`가 bot token과 수신자 chat ID를
+   조회해 forecast context를 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다. 즉 LLM
+   분석 요청 기준은 현재 위험 발생이 아니라 10분 뒤 위험 예측이다.
 
 ```json
 {
@@ -126,6 +144,43 @@ flowchart LR
   }
 }
 ```
+
+### 위험 로그와 조치 이력
+
+1. React 클라이언트는 `GET /api/hazards?status=OPEN`으로 처리 대상 위험 로그를
+   polling 방식으로 조회할 수 있다.
+2. 목록 응답은 Grid 표시용 DTO만 포함하며 SWMM snapshot 원본 전체를 반환하지
+   않는다.
+3. 상세 조회 `GET /api/hazards/{id}`는 해당 위험 대상의 당시 수치만
+   `metrics_snapshot`으로 반환한다.
+4. 관리자가 `POST /api/hazards/{id}/actions`로 조치 내용을 저장하면
+   `HazardAction`이 생성된다.
+5. `complete=true`이면 `HazardEvent`는 실제 삭제하지 않고 `status=RESOLVED`,
+   `is_deleted=true`, `resolved_at=현재 시각`으로 논리 삭제된다.
+6. 조치 저장 시 위험 상황과 조치 내용을 결합한 `embedding_text`를 만들고
+   `HazardCaseEmbedding`에 저장한다. 현재 VectorDB 연동은 MVP 더미 구현으로
+   `hazard-case-{uuid}` 형식의 `vector_id`만 생성한다.
+7. Django는 같은 조치 내용을 FastAPI/LangChain 서버의 maintenance log endpoint로
+   POST한다. 요청 body는 `{"sourceId": target_id, "action_details": action_detail}`
+   형식이며, `action_detail`은 React에서 받은 원문을 그대로 사용한다.
+8. FastAPI 응답의 `vector_id` 또는 실패 메시지는 `HazardAction`의
+   `fastapi_*` 필드에 저장한다. FastAPI 연동 실패는 조치 저장과 위험 로그 완료
+   처리를 롤백하지 않는다.
+
+### 10분 위험 예측
+
+1. `state.broadcast()`가 모든 snapshot을 `forecast_state.record_snapshot()`에
+   전달한다.
+2. forecast state는 전체 snapshot을 저장하지 않고 `links.fullness`,
+   `links.capacityRatio`, `nodes.depthRatio`, `nodes.floodingCms` 같은 최소 metric만
+   최근 `SUPERMARIO_FORECAST_BUFFER_SECONDS` 동안 메모리에 유지한다.
+3. `GET /api/hazards/forecast?minutes=10`은 최근
+   `SUPERMARIO_FORECAST_WINDOW_SECONDS`초의 변화량을 기준으로 미래 값을 선형
+   외삽한다.
+4. 예측 결과의 `WARNING/CRITICAL` 이벤트는 React가 표시할 수 있고,
+   `CRITICAL` 예측은 LLM dispatch의 입력 기준으로 사용된다.
+5. 이 1차 구현은 단일 프로세스 runtime state 기반이다. 서버 재시작 또는 다중
+   프로세스 배포에서는 예측 buffer가 공유되지 않는다.
 
 ## SWMM 교체 지점
 

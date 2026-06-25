@@ -38,6 +38,8 @@ services:
       SUPERMARIO_API_BASE_URL: "http://127.0.0.1:8000/api"
       SUPERMARIO_LLM_BASE_URL: "http://127.0.0.1:8001/llm"
       SUPERMARIO_LLM_ANALYZE_URL: "http://127.0.0.1:8001/llm/analyze"
+      SUPERMARIO_LLM_MAINTENANCE_LOG_URL: "http://127.0.0.1:8001/llm/maintenance/log/"
+      SUPERMARIO_FORECAST_MINUTES: "10"
     depends_on:
       postgres:
         condition: service_healthy

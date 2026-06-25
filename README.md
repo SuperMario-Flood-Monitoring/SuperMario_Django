@@ -337,6 +337,13 @@ SuperMario_Django/
 | `POSTGRES_PORT` | `5432` | PostgreSQL container 내부 포트 |
 | `POSTGRES_HOST_PORT` | `5432` | 로컬 Docker Compose가 host에 노출할 PostgreSQL 포트 |
 | `ENABLE_LEGACY_SIMULATION_API` | `false` | 이전 simulation API 활성화 여부 |
+| `SUPERMARIO_LLM_BASE_URL` | local `http://127.0.0.1:8001/llm` | LLM/FastAPI 서버 base URL |
+| `SUPERMARIO_LLM_ANALYZE_URL` | `SUPERMARIO_LLM_BASE_URL/analyze` | 위험 context 분석 요청 URL |
+| `SUPERMARIO_LLM_MAINTENANCE_LOG_URL` | `SUPERMARIO_LLM_BASE_URL/maintenance/log/` | 관리자 장애 조치 원문 전달 URL |
+| `SUPERMARIO_LLM_MAINTENANCE_LOG_TIMEOUT_SECONDS` | `10` | 장애 조치 전달 요청 timeout 초 |
+| `SUPERMARIO_FORECAST_MINUTES` | `10` | runtime state 기반 미래 위험 예측 horizon 분 |
+| `SUPERMARIO_FORECAST_WINDOW_SECONDS` | `120` | 예측 증가율 계산에 사용할 최근 관측 구간 초 |
+| `SUPERMARIO_FORECAST_BUFFER_SECONDS` | `900` | 메모리에 유지할 예측용 snapshot 샘플 기간 초 |
 | `SUPERMARIO_RISK_POLICY_LEVEL` | `balanced` | 이상상황 확정 기준 레벨. `sensitive`, `balanced`, `strict` 지원 |
 | `SUPERMARIO_RISK_CONTEXT_LEVEL` | `optimal` | LLM trigger payload에 직접 붙일 context 크기. `optimal`, `medium`, `full` 지원 |
 | `SUPERMARIO_RISK_PAUSE_ON_TRIGGER` | `false` | 디버깅용. `true`이면 LLM trigger 발생 tick에서 엔진을 자동 일시정지 |

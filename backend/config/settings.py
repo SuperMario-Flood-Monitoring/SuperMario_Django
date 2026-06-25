@@ -41,12 +41,23 @@ SUPERMARIO_LLM_ANALYZE_URL = os.getenv(
     "SUPERMARIO_LLM_ANALYZE_URL",
     f"{SUPERMARIO_LLM_BASE_URL}/analyze",
 )
+SUPERMARIO_LLM_MAINTENANCE_LOG_URL = os.getenv(
+    "SUPERMARIO_LLM_MAINTENANCE_LOG_URL",
+    f"{SUPERMARIO_LLM_BASE_URL}/maintenance/log/",
+)
+SUPERMARIO_LLM_MAINTENANCE_LOG_TIMEOUT_SECONDS = float(
+    os.getenv("SUPERMARIO_LLM_MAINTENANCE_LOG_TIMEOUT_SECONDS", "10")
+)
+SUPERMARIO_FORECAST_MINUTES = int(os.getenv("SUPERMARIO_FORECAST_MINUTES", "10"))
+SUPERMARIO_FORECAST_WINDOW_SECONDS = int(os.getenv("SUPERMARIO_FORECAST_WINDOW_SECONDS", "120"))
+SUPERMARIO_FORECAST_BUFFER_SECONDS = int(os.getenv("SUPERMARIO_FORECAST_BUFFER_SECONDS", "900"))
 
 INSTALLED_APPS = [
     "daphne",
     "corsheaders",
     "apps.auth.apps.AuthConfig",
     "apps.facilities",
+    "apps.monitoring.apps.MonitoringConfig",
     "apps.notification.apps.NotificationConfig",
     "apps.scenarios",
     "apps.simulation",
