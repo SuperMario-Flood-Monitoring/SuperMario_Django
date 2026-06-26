@@ -93,7 +93,7 @@ class HazardApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["metrics_snapshot"], {"flowCms": -0.25})
 
-    def test_action_resolves_event_logically_and_creates_embedding_record(self):
+    def test_action_start_marks_event_in_progress_without_embedding_dispatch(self):
         event = HazardEvent.objects.create(
             event_key="run-1:REVERSE_FLOW:PIPE_1:CRITICAL",
             run_id="run-1",
@@ -113,12 +113,8 @@ class HazardApiTests(TestCase):
                 f"/api/hazards/{event.id}/actions",
                 data=json.dumps(
                     {
-                        "action_detail": "하류 관로 현장 점검 완료",
+                        "action_detail": "하류 관로 현장 점검 진행",
                         "action_type": "FIELD_CHECK",
-                        "result_detail": "토사 제거 후 수위 안정화",
-                        "result_status": "RESOLVED",
-                        "recurrence_note": "폭우 시 상류 맨홀 우선 점검",
-                        "complete": True,
                     }
                 ),
                 content_type="application/json",
@@ -128,6 +124,51 @@ class HazardApiTests(TestCase):
         self.assertEqual(response.status_code, 201)
         event.refresh_from_db()
         action = HazardAction.objects.get()
+        self.assertEqual(event.status, HazardEvent.Status.IN_PROGRESS)
+        self.assertFalse(event.is_deleted)
+        self.assertEqual(action.action_detail, "하류 관로 현장 점검 진행")
+        self.assertEqual(action.fastapi_sync_status, HazardAction.FastApiSyncStatus.PENDING)
+        post_maintenance_log.assert_not_called()
+        self.assertEqual(HazardCaseEmbedding.objects.count(), 0)
+
+    def test_action_completion_resolves_event_and_dispatches_embedding_payload(self):
+        event = HazardEvent.objects.create(
+            event_key="run-1:REVERSE_FLOW:PIPE_1:CRITICAL",
+            run_id="run-1",
+            target_id="PIPE_1",
+            source="link",
+            hazard_level="CRITICAL",
+            hazard_type="REVERSE_FLOW",
+            hazard_detail="역류 감지",
+            status=HazardEvent.Status.IN_PROGRESS,
+            metrics_snapshot={"flowCms": -0.25},
+        )
+        action = HazardAction.objects.create(
+            event=event,
+            action_detail="하류 관로 현장 점검 진행",
+            action_type="FIELD_CHECK",
+        )
+
+        with patch(
+            "apps.monitoring.services.maintenance_dispatcher.post_maintenance_log",
+            return_value={"ok": True, "vector_id": "vector-1"},
+        ) as post_maintenance_log:
+            response = self.client.patch(
+                f"/api/hazards/{event.id}/actions/{action.id}",
+                data=json.dumps(
+                    {
+                        "result_detail": "토사 제거 후 수위 안정화",
+                        "result_status": "RESOLVED",
+                        "recurrence_note": "폭우 시 상류 맨홀 우선 점검",
+                    }
+                ),
+                content_type="application/json",
+                HTTP_AUTHORIZATION=self.auth_header,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        event.refresh_from_db()
+        action.refresh_from_db()
         self.assertEqual(event.status, HazardEvent.Status.RESOLVED)
         self.assertTrue(event.is_deleted)
         self.assertEqual(action.fastapi_sync_status, HazardAction.FastApiSyncStatus.SENT)
@@ -136,15 +177,15 @@ class HazardApiTests(TestCase):
         self.assertEqual(dispatched_payload["event"]["target_id"], "PIPE_1")
         self.assertEqual(dispatched_payload["event"]["hazard_type"], "REVERSE_FLOW")
         self.assertEqual(dispatched_payload["metrics"]["flowCms"], -0.25)
-        self.assertEqual(dispatched_payload["action"]["initial_action_detail"], "하류 관로 현장 점검 완료")
+        self.assertEqual(dispatched_payload["action"]["initial_action_detail"], "하류 관로 현장 점검 진행")
         self.assertEqual(dispatched_payload["action"]["result_detail"], "토사 제거 후 수위 안정화")
         self.assertEqual(dispatched_payload["action"]["recurrence_note"], "폭우 시 상류 맨홀 우선 점검")
         self.assertEqual(HazardCaseEmbedding.objects.count(), 1)
         embedding_text = HazardCaseEmbedding.objects.get().embedding_text
-        self.assertIn("하류 관로 현장 점검 완료", embedding_text)
+        self.assertIn("하류 관로 현장 점검 진행", embedding_text)
         self.assertIn("폭우 시 상류 맨홀 우선 점검", embedding_text)
 
-    def test_incomplete_action_does_not_resolve_or_create_embedding_record(self):
+    def test_action_completion_requires_result_detail(self):
         event = HazardEvent.objects.create(
             event_key="run-1:REVERSE_FLOW:PIPE_1:CRITICAL",
             run_id="run-1",
@@ -155,31 +196,22 @@ class HazardApiTests(TestCase):
             hazard_detail="역류 감지",
             metrics_snapshot={"flowCms": -0.25},
         )
+        action = HazardAction.objects.create(event=event, action_detail="현장 확인 요청")
 
-        with patch(
-            "apps.monitoring.services.maintenance_dispatcher.post_maintenance_log",
-            return_value={"ok": True, "vector_id": "vector-2"},
-        ):
-            response = self.client.post(
-                f"/api/hazards/{event.id}/actions",
-                data=json.dumps(
-                    {
-                        "action_detail": "현장 확인 요청",
-                        "action_type": "FIELD_CHECK",
-                        "result_status": "IN_PROGRESS",
-                        "complete": False,
-                    }
-                ),
-                content_type="application/json",
-                HTTP_AUTHORIZATION=self.auth_header,
-            )
+        response = self.client.patch(
+            f"/api/hazards/{event.id}/actions/{action.id}",
+            data=json.dumps({"recurrence_note": "확인 필요"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
 
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.status_code, 400)
         event.refresh_from_db()
-        self.assertEqual(event.status, HazardEvent.Status.IN_PROGRESS)
+        action.refresh_from_db()
+        self.assertEqual(event.status, HazardEvent.Status.OPEN)
         self.assertFalse(event.is_deleted)
         self.assertEqual(HazardAction.objects.count(), 1)
-        self.assertEqual(HazardAction.objects.get().fastapi_sync_status, HazardAction.FastApiSyncStatus.SENT)
+        self.assertEqual(action.fastapi_sync_status, HazardAction.FastApiSyncStatus.PENDING)
         self.assertEqual(HazardCaseEmbedding.objects.count(), 0)
 
     def test_action_saves_even_when_fastapi_dispatch_fails(self):
@@ -191,27 +223,29 @@ class HazardApiTests(TestCase):
             hazard_level="CRITICAL",
             hazard_type="REVERSE_FLOW",
             hazard_detail="역류 감지",
+            status=HazardEvent.Status.IN_PROGRESS,
             metrics_snapshot={"flowCms": -0.25},
         )
+        action = HazardAction.objects.create(event=event, action_detail="현장 확인 요청")
 
         with patch(
             "apps.monitoring.services.maintenance_dispatcher.post_maintenance_log",
             side_effect=OSError("connection refused"),
         ):
-            response = self.client.post(
-                f"/api/hazards/{event.id}/actions",
+            response = self.client.patch(
+                f"/api/hazards/{event.id}/actions/{action.id}",
                 data=json.dumps(
                     {
-                        "action_detail": "현장 확인 요청",
-                        "complete": True,
+                        "result_detail": "현장 확인 완료",
+                        "result_status": "RESOLVED",
                     }
                 ),
                 content_type="application/json",
                 HTTP_AUTHORIZATION=self.auth_header,
             )
 
-        self.assertEqual(response.status_code, 201)
-        action = HazardAction.objects.get()
+        self.assertEqual(response.status_code, 200)
+        action.refresh_from_db()
         event.refresh_from_db()
         self.assertEqual(event.status, HazardEvent.Status.RESOLVED)
         self.assertEqual(action.fastapi_sync_status, HazardAction.FastApiSyncStatus.FAILED)

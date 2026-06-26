@@ -14,6 +14,7 @@ from .services.hazard_service import (
     list_hazard_events,
     serialize_hazard_detail,
     serialize_hazard_row,
+    start_hazard_action,
 )
 
 
@@ -71,27 +72,40 @@ class HazardDetailView(View):
 class HazardActionView(View):
     def post(self, request, hazard_id: int):
         try:
-            action = complete_hazard_action(hazard_id, parse_body(request))
+            action = start_hazard_action(hazard_id, parse_body(request))
         except Http404:
             return error_response(404, "Hazard event not found.")
         except ValueError as exc:
             return error_response(400, str(exc))
 
-        return JsonResponse(
-            {
-                "id": action.id,
-                "event_id": action.event_id,
-                "action_detail": action.action_detail,
-                "action_type": action.action_type,
-                "result_detail": action.result_detail,
-                "result_status": action.result_status,
-                "recurrence_note": action.recurrence_note,
-                "fastapi_sync": {
-                    "status": action.fastapi_sync_status,
-                    "vector_id": action.fastapi_vector_id,
-                    "error_message": action.fastapi_error_message,
-                },
-                "event": serialize_hazard_detail(action.event),
-            },
-            status=201,
-        )
+        return JsonResponse(serialize_action_response(action), status=201)
+
+
+class HazardActionCompleteView(View):
+    def patch(self, request, hazard_id: int, action_id: int):
+        try:
+            action = complete_hazard_action(hazard_id, action_id, parse_body(request))
+        except Http404:
+            return error_response(404, "Hazard action not found.")
+        except ValueError as exc:
+            return error_response(400, str(exc))
+
+        return JsonResponse(serialize_action_response(action))
+
+
+def serialize_action_response(action) -> dict[str, Any]:
+    return {
+        "id": action.id,
+        "event_id": action.event_id,
+        "action_detail": action.action_detail,
+        "action_type": action.action_type,
+        "result_detail": action.result_detail,
+        "result_status": action.result_status,
+        "recurrence_note": action.recurrence_note,
+        "fastapi_sync": {
+            "status": action.fastapi_sync_status,
+            "vector_id": action.fastapi_vector_id,
+            "error_message": action.fastapi_error_message,
+        },
+        "event": serialize_hazard_detail(action.event),
+    }

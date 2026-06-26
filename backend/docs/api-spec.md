@@ -306,7 +306,7 @@ SWMM snapshot 원본 전체는 반환하지 않는다.
 }
 ```
 
-### 위험 로그 조치 저장
+### 위험 로그 조치 시작 저장
 
 - Method: `POST`
 - Path: `/api/hazards/{hazard_id}/actions`
@@ -315,27 +315,60 @@ SWMM snapshot 원본 전체는 반환하지 않는다.
 
 ```json
 {
-  "action_detail": "하류 관로 현장 점검 완료",
-  "action_type": "FIELD_CHECK",
-  "result_detail": "토사 제거 후 수위 안정화",
-  "result_status": "RESOLVED",
-  "recurrence_note": "폭우 시 상류 맨홀 우선 점검",
-  "complete": true
+  "action_detail": "하류 관로 현장 점검 진행",
+  "action_type": "FIELD_CHECK"
 }
 ```
 
-`complete=true`이면 위험 로그는 실제 삭제하지 않고 `status=RESOLVED`,
-`is_deleted=true`, `resolved_at=현재 시각`으로 논리 삭제 처리한다. 동시에
-위험 상황과 조치 내용을 결합한 `embedding_text`를 만들고
-`HazardCaseEmbedding` row에 임시 `vector_id`와 함께 저장한다.
-`complete=false`이면 위험 로그는 `status=IN_PROGRESS`로 변경하고 embedding
-row는 만들지 않는다.
+조치 시작 저장은 `action_detail` 원문을 `HazardAction`에 저장하고 위험 로그를
+`status=IN_PROGRESS`로 변경한다. 이 시점에는 결과가 없으므로
+`HazardCaseEmbedding` row를 만들지 않고 FastAPI/LangChain maintenance log
+endpoint로도 전송하지 않는다.
 
-조치 저장 후 Django는 FastAPI/LangChain 서버의 maintenance log endpoint로
-위험 사건, 당시 주요 지표, React에서 받은 조치/결과/재발 참고사항을 구조화해
-전달한다. FastAPI 요청이 실패해도
-`HazardAction` 저장과 완료 처리는 롤백하지 않고, 연동 결과만
-`fastapi_sync`에 기록한다.
+조치 시작 응답의 주요 필드:
+
+```json
+{
+  "id": 1,
+  "event_id": 1,
+  "action_detail": "하류 관로 현장 점검 진행",
+  "action_type": "FIELD_CHECK",
+  "result_detail": "",
+  "result_status": "",
+  "recurrence_note": "",
+  "fastapi_sync": {
+    "status": "PENDING",
+    "vector_id": "",
+    "error_message": ""
+  }
+}
+```
+
+### 위험 로그 조치 완료 저장
+
+- Method: `PATCH`
+- Path: `/api/hazards/{hazard_id}/actions/{action_id}`
+- 성공: `200 OK`
+- 실패: `400 Bad Request`, `404 Not Found`
+
+```json
+{
+  "result_detail": "토사 제거 후 수위 안정화",
+  "result_status": "RESOLVED",
+  "recurrence_note": "폭우 시 상류 맨홀 우선 점검"
+}
+```
+
+`result_detail`은 필수다. `recurrence_note`는 선택값이다. 완료 저장 시 위험
+로그는 실제 삭제하지 않고 `status=RESOLVED`, `is_deleted=true`,
+`resolved_at=현재 시각`으로 논리 삭제 처리한다. 동시에 위험 상황, 조치 내용,
+결과, 재발 참고사항을 결합한 `embedding_text`를 만들고 `HazardCaseEmbedding`
+row에 임시 `vector_id`와 함께 저장한다.
+
+조치 완료 저장 후 Django는 FastAPI/LangChain 서버의 maintenance log endpoint로
+위험 사건, 당시 주요 지표, 기존 조치 내용, 결과, 재발 참고사항을 구조화해
+전달한다. FastAPI 요청이 실패해도 `HazardAction` 업데이트와 완료 처리는
+롤백하지 않고, 연동 결과만 `fastapi_sync`에 기록한다.
 
 Django가 FastAPI로 보내는 body:
 
@@ -359,7 +392,7 @@ Django가 FastAPI로 보내는 body:
   },
   "action": {
     "status": "RESOLVED",
-    "initial_action_detail": "하류 관로 현장 점검 완료",
+    "initial_action_detail": "하류 관로 현장 점검 진행",
     "action_type": "FIELD_CHECK",
     "result_detail": "토사 제거 후 수위 안정화",
     "result_status": "RESOLVED",
@@ -375,7 +408,7 @@ Django가 FastAPI로 보내는 body:
 {
   "id": 1,
   "event_id": 1,
-  "action_detail": "하류 관로 현장 점검 완료",
+  "action_detail": "하류 관로 현장 점검 진행",
   "action_type": "FIELD_CHECK",
   "result_detail": "토사 제거 후 수위 안정화",
   "result_status": "RESOLVED",

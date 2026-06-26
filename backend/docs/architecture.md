@@ -156,18 +156,21 @@ flowchart LR
    않는다.
 3. 상세 조회 `GET /api/hazards/{id}`는 해당 위험 대상의 당시 수치만
    `metrics_snapshot`으로 반환한다.
-4. 관리자가 `POST /api/hazards/{id}/actions`로 조치 내용, 결과 상세, 재발 시
-   참고사항을 저장하면 `HazardAction`이 생성된다.
-5. `complete=false`이면 `HazardEvent`는 `status=IN_PROGRESS`로 변경된다.
-6. `complete=true`이면 `HazardEvent`는 실제 삭제하지 않고 `status=RESOLVED`,
+4. 관리자가 `POST /api/hazards/{id}/actions`로 조치 내용을 저장하면
+   `HazardAction`이 생성되고 `HazardEvent`는 `status=IN_PROGRESS`로 변경된다.
+5. 조치 시작 단계에는 결과가 없으므로 `HazardCaseEmbedding`을 만들지 않고
+   FastAPI/LangChain maintenance log endpoint로도 전송하지 않는다.
+6. 관리자가 `PATCH /api/hazards/{id}/actions/{action_id}`로 결과 상세와 재발 시
+   참고사항을 저장하면 기존 `HazardAction`이 업데이트된다.
+7. 조치 완료 시 `HazardEvent`는 실제 삭제하지 않고 `status=RESOLVED`,
    `is_deleted=true`, `resolved_at=현재 시각`으로 논리 삭제된다.
-7. 조치 저장 시 위험 상황과 조치 내용을 결합한 `embedding_text`를 만들고
-   `HazardCaseEmbedding`에 저장한다. 현재 VectorDB 연동은 MVP 더미 구현으로
-   `hazard-case-{uuid}` 형식의 `vector_id`만 생성한다.
-8. Django는 위험 사건, 당시 주요 지표, 조치/결과/재발 참고사항을 구조화해
+8. 조치 완료 시점에 위험 상황, 조치 내용, 결과, 재발 참고사항을 결합한
+   `embedding_text`를 만들고 `HazardCaseEmbedding`에 저장한다. 현재 VectorDB
+   연동은 MVP 더미 구현으로 `hazard-case-{uuid}` 형식의 `vector_id`만 생성한다.
+9. Django는 위험 사건, 당시 주요 지표, 조치/결과/재발 참고사항을 구조화해
    FastAPI/LangChain 서버의 maintenance log endpoint로 POST한다. 요청 body는
    `event`, `metrics`, `action` 객체를 포함한다.
-9. FastAPI 응답의 `vector_id` 또는 실패 메시지는 `HazardAction`의
+10. FastAPI 응답의 `vector_id` 또는 실패 메시지는 `HazardAction`의
    `fastapi_*` 필드에 저장한다. FastAPI 연동 실패는 조치 저장과 위험 로그 완료
    처리를 롤백하지 않는다.
 
