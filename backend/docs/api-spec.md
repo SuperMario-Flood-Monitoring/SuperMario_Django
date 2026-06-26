@@ -18,7 +18,7 @@
 | 시나리오    | `/api/scenarios`     | `apps/scenarios/apis/scenario_api.py` |
 | 시설        | `/api/facilities/`   | `apps/facilities/views.py`            |
 | 위험 로그   | `/api/hazards`       | `apps/monitoring/views.py`            |
-| 알림 수신자 | `/api/notification/` | `apps/notification/views.py`          |
+| 알림 수신자 | `/api/notification/` | `apps/notification/apis/notification_api.py` |
 | 인증        | `/api/auth/`         | `apps/auth/apis.py`                   |
 | 관리자      | `/admin/`            | Django admin                          |
 

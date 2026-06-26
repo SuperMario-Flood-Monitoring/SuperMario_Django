@@ -21,9 +21,9 @@
 | Django system check                    | 통과      |
 | 직접 통합테스트                        | 통과      |
 | migration 변경 여부 확인               | 변경 없음 |
-| 활성 auth/facilities/monitoring/notification/simulation 테스트 | 47개 통과 |
-| 전체 테스트 발견 수                    | 47        |
-| 전체 테스트 성공                       | 47        |
+| 활성 auth/facilities/monitoring/notification/simulation 테스트 | 48개 통과 |
+| 전체 테스트 발견 수                    | 48        |
+| 전체 테스트 성공                       | 48        |
 | 전체 테스트 실패                       | 0         |
 | 전체 테스트 오류                       | 0         |
 | 전체 테스트 최종 결과                  | 통과      |
@@ -35,7 +35,7 @@ notification app이 추가되기 전 기준으로 사용자가 직접 수행한 
 흐름을 기준으로 수행한 결과이며, notification app 추가 이후의 알림 수신자 API와
 LLM notification payload는 아래 자동 테스트 결과로 별도 검증했다.
 
-`apps.auth apps.facilities apps.monitoring apps.notification apps.simulation` 테스트는 47개 모두
+`apps.auth apps.facilities apps.monitoring apps.notification apps.simulation` 테스트는 48개 모두
 통과했다.
 `apps.simulation`에는 LangChain payload의 `id`를 React 강수 preset 기준으로
 `맑음`, `약한비`, `폭우`로 정규화하는 LEVEL 13 회귀 테스트와 LLM 발송
@@ -72,7 +72,12 @@ LEVEL 21 기준으로 시작 직후 관측 시간이 부족할 때 forecast CRIT
 `PREDICTED_BLOCKAGE_CLOSED` CRITICAL forecast event와 LLM forecast payload가
 생성되는지 검증한다.
 
-현재 `manage.py test -v 2`의 전체 discovery 대상 47개 테스트는 모두 통과한다.
+LEVEL 22 기준으로 `apps.notification`의 알림 수신자 API를 Django class-based
+view에서 Django Ninja API로 전환했다. 기존 URL과 응답 body 계약은 유지하며,
+JWT Authorization 헤더만 있으면 CSRF token 없이도 생성 요청이 통과하는지
+검증하는 회귀 테스트를 추가했다.
+
+현재 `manage.py test -v 2`의 전체 discovery 대상 48개 테스트는 모두 통과한다.
 
 ## 통과한 테스트
 
@@ -113,6 +118,7 @@ LEVEL 21 기준으로 시작 직후 관측 시간이 부족할 때 forecast CRIT
 | `apps.notification.tests.NotificationPayloadTests.test_builds_empty_notification_payload_without_rows`             | 통과 |
 | `apps.notification.tests.NotificationPayloadTests.test_builds_notification_payload_for_langchain`                  | 통과 |
 | `apps.notification.tests.NotificationRecipientApiTests.test_creates_notification_recipient`                        | 통과 |
+| `apps.notification.tests.NotificationRecipientApiTests.test_creates_notification_recipient_with_jwt_without_csrf_token` | 통과 |
 | `apps.notification.tests.NotificationRecipientApiTests.test_deletes_notification_recipient`                        | 통과 |
 | `apps.notification.tests.NotificationRecipientApiTests.test_lists_notification_recipients`                         | 통과 |
 | `apps.notification.tests.NotificationRecipientApiTests.test_rejects_notification_api_without_admin_token`          | 통과 |
@@ -134,7 +140,7 @@ LEVEL 21 기준으로 시작 직후 관측 시간이 부족할 때 forecast CRIT
 | auth API 및 admin 생성 command             |        10 | 통과 |
 | facilities API                             |         3 | 통과 |
 | monitoring 위험 로그 API, 예측, 저장 서비스, FastAPI maintenance 연동 |        16 | 통과 |
-| notification API 및 LLM notification payload |      6 | 통과 |
+| notification API 및 LLM notification payload |      7 | 통과 |
 | LLM dispatcher                             |         7 | 통과 |
 | risk lifecycle                             |         2 | 통과 |
 

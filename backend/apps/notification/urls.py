@@ -1,12 +1,10 @@
 from django.urls import path
 
-from .views import NotificationRecipientDetailView, NotificationRecipientListView
+from .apis import notification_api
 
 
 app_name = "notification"
 
 urlpatterns = [
-    path("", NotificationRecipientListView.as_view(), name="create"),
-    path("list", NotificationRecipientListView.as_view(), name="list"),
-    path("<int:recipient_id>", NotificationRecipientDetailView.as_view(), name="delete"),
+    path("", notification_api.urls),
 ]

@@ -1,7 +1,7 @@
 import json
 
 from django.contrib.auth.hashers import make_password
-from django.test import TestCase
+from django.test import Client, TestCase
 
 from apps.auth.models import User
 from apps.auth.tokens import issue_token
@@ -59,6 +59,19 @@ class NotificationRecipientApiTests(TestCase):
         response = self.client.get("/api/notification/list")
 
         self.assertEqual(response.status_code, 401)
+
+    def test_creates_notification_recipient_with_jwt_without_csrf_token(self):
+        csrf_client = Client(enforce_csrf_checks=True)
+
+        response = csrf_client.post(
+            "/api/notification/",
+            data=json.dumps({"employee_name": "홍길동", "chat_id": "12345"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(NotificationRecipient.objects.count(), 1)
 
 
 class NotificationPayloadTests(TestCase):
