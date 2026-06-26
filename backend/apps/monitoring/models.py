@@ -43,7 +43,9 @@ class HazardAction(models.Model):
     event = models.ForeignKey(HazardEvent, related_name="actions", on_delete=models.CASCADE)
     action_detail = models.TextField()
     action_type = models.CharField(max_length=60, blank=True)
+    result_detail = models.TextField(blank=True)
     result_status = models.CharField(max_length=60, blank=True)
+    recurrence_note = models.TextField(blank=True)
     fastapi_sync_status = models.CharField(
         max_length=20,
         choices=FastApiSyncStatus.choices,

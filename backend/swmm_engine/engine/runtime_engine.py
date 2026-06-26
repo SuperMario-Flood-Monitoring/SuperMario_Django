@@ -95,6 +95,7 @@ RISK_EXPORT_CONTEXT_ON_TRIGGER = env_flag("SUPERMARIO_RISK_EXPORT_CONTEXT_ON_TRI
 RISK_RESOLUTION_GRACE_TICKS = int(RISK_POLICY.get("resolutionGraceTicks") or 5)
 RISK_PAUSE_ON_TRIGGER = env_flag("SUPERMARIO_RISK_PAUSE_ON_TRIGGER")
 RISK_LLM_SUSTAIN_SECONDS = LLM_DISPATCH_COOLDOWN_SECONDS
+RISK_LLM_EMERGENCY_EVENT_TYPES = {"BLOCKAGE_CLOSED", "REVERSE_FLOW"}
 RISK_SEVERITY_RANK = {
     "NORMAL": 0,
     "WATCH": 1,
@@ -715,7 +716,7 @@ class RealtimeSwmmSession:
                     existing.pop("previousSeverity", None)
                 issue = existing
 
-            if self.should_trigger_sustained_risk_issue(issue, now):
+            if self.should_trigger_emergency_risk_issue(event, issue) or self.should_trigger_sustained_risk_issue(issue, now):
                 sustained_seconds = self.risk_issue_sustained_seconds(issue, now)
                 issue["lastTriggeredStepIndex"] = self.step_index
                 issue["lastTriggeredMonotonic"] = now
@@ -770,6 +771,15 @@ class RealtimeSwmmSession:
         """위험 이슈가 LLM 발송 기준 시간 이상 유지됐는지 판단한다."""
 
         return self.risk_issue_sustained_seconds(issue, now) >= RISK_LLM_SUSTAIN_SECONDS
+
+    def should_trigger_emergency_risk_issue(self, event: dict[str, Any], issue: dict[str, Any]) -> bool:
+        """runtime 막힘/역류는 유지시간 대기 없이 LLM 발송 후보로 연다."""
+
+        if str(event.get("eventType") or "") not in RISK_LLM_EMERGENCY_EVENT_TYPES:
+            return False
+        if str(event.get("severity") or "") != "CRITICAL":
+            return False
+        return issue.get("lastTriggeredMonotonic") is None
 
     def _risk_issue_record(self, issue_id: str, event: dict[str, Any]) -> dict[str, Any]:
         record = {

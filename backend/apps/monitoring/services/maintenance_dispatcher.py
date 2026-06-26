@@ -12,10 +12,31 @@ from django.utils import timezone
 from ..models import HazardAction
 
 
-def build_maintenance_log_payload(action: HazardAction) -> dict[str, str]:
+def build_maintenance_log_payload(action: HazardAction) -> dict[str, Any]:
+    event = action.event
     return {
-        "sourceId": action.event.target_id,
-        "action_details": action.action_detail,
+        "event": {
+            "id": event.id,
+            "run_id": event.run_id,
+            "step_index": event.step_index,
+            "model_time": event.model_time,
+            "target_id": event.target_id,
+            "source": event.source,
+            "hazard_type": event.hazard_type,
+            "hazard_level": event.hazard_level,
+            "hazard_detail": event.hazard_detail,
+            "created_at": event.created_at.isoformat(timespec="seconds") if event.created_at else None,
+        },
+        "metrics": dict(event.metrics_snapshot or {}),
+        "action": {
+            "status": event.status,
+            "initial_action_detail": action.action_detail,
+            "action_type": action.action_type,
+            "result_detail": action.result_detail,
+            "result_status": action.result_status,
+            "recurrence_note": action.recurrence_note,
+            "created_at": action.created_at.isoformat(timespec="seconds") if action.created_at else None,
+        },
     }
 
 
@@ -71,7 +92,7 @@ def dispatch_maintenance_log(action: HazardAction) -> dict[str, Any]:
     }
 
 
-def post_maintenance_log(payload: dict[str, str]) -> dict[str, Any]:
+def post_maintenance_log(payload: dict[str, Any]) -> dict[str, Any]:
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
         settings.SUPERMARIO_LLM_MAINTENANCE_LOG_URL,

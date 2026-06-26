@@ -16,9 +16,7 @@ from swmm_engine.llm_dispatcher import (
 
 class LangChainDispatchPayloadTests(SimpleTestCase):
     def setUp(self):
-        llm_dispatcher._scheduled_dispatch_keys.clear()
-        llm_dispatcher._scheduled_dispatch_key_order.clear()
-        llm_dispatcher._last_llm_dispatch_scheduled_at = None
+        llm_dispatcher.reset_dispatch_policy_state()
 
     def test_normalizes_react_rainfall_preset_values(self):
         cases = [
@@ -71,7 +69,7 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
         self.assertEqual(payload["TELEGRAM_BOT_TOKEN"], "token")
         self.assertEqual(payload["TELEGRAM_CHAT_ID"], ["chat-1"])
 
-    def test_skips_dispatch_during_cooldown(self):
+    def test_queues_dispatch_during_aggregation_window(self):
         first_payload = _llm_trigger_payload(step_index=1)
         second_payload = _llm_trigger_payload(step_index=2)
 
@@ -85,26 +83,65 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
             self.assertFalse(llm_dispatcher.schedule_llm_analysis_dispatch(second_payload))
 
         self.assertEqual(append_log.call_count, 2)
-        self.assertEqual(append_log.call_args_list[0].kwargs["status"], "scheduled")
-        self.assertEqual(append_log.call_args_list[1].kwargs["status"], "cooldown_skipped")
-        self.assertIn("remainingSeconds", append_log.call_args_list[1].kwargs["detail"])
+        self.assertEqual(append_log.call_args_list[0].kwargs["status"], "aggregation_queued")
+        self.assertEqual(append_log.call_args_list[1].kwargs["status"], "aggregation_duplicate_skipped")
         self.assertEqual(create_task.call_count, 1)
 
-    def test_allows_dispatch_after_cooldown(self):
+    def test_flushes_aggregation_batch_and_starts_cooldown(self):
         first_payload = _llm_trigger_payload(step_index=1)
-        second_payload = _llm_trigger_payload(step_index=2)
+        second_payload = _llm_trigger_payload(step_index=2, source_id="PIPE_2")
 
         with (
-            patch.object(llm_dispatcher.time, "monotonic", side_effect=[1000.0, 1301.0]),
+            patch.object(llm_dispatcher.time, "monotonic", side_effect=[1000.0, 1001.0, 1002.0, 1003.0]),
             patch.object(llm_dispatcher, "append_llm_dispatch_log") as append_log,
             patch.object(llm_dispatcher, "dispatch_llm_analysis", return_value=object()),
             patch.object(llm_dispatcher.asyncio, "create_task", side_effect=_close_coroutine) as create_task,
         ):
             self.assertTrue(llm_dispatcher.schedule_llm_analysis_dispatch(first_payload))
             self.assertTrue(llm_dispatcher.schedule_llm_analysis_dispatch(second_payload))
+            self.assertTrue(llm_dispatcher.dispatch_candidate_batch("aggregation_window"))
 
-        self.assertEqual(append_log.call_count, 2)
-        self.assertEqual(create_task.call_count, 2)
+        self.assertEqual(append_log.call_args_list[-1].kwargs["status"], "scheduled")
+        self.assertEqual(create_task.call_count, 4)
+        self.assertGreater(llm_dispatcher.llm_dispatch_cooldown_remaining_seconds(1003.0), 0)
+
+    def test_queues_pending_during_cooldown_and_flushes_after_window(self):
+        first_payload = _llm_trigger_payload(step_index=1)
+        second_payload = _llm_trigger_payload(step_index=2, source_id="PIPE_2")
+
+        with (
+            patch.object(llm_dispatcher.time, "monotonic", side_effect=[1000.0, 1001.0, 1002.0, 1003.0, 1004.0, 1005.0]),
+            patch.object(llm_dispatcher, "append_llm_dispatch_log") as append_log,
+            patch.object(llm_dispatcher, "dispatch_llm_analysis", return_value=object()),
+            patch.object(llm_dispatcher.asyncio, "create_task", side_effect=_close_coroutine),
+        ):
+            self.assertTrue(llm_dispatcher.schedule_llm_analysis_dispatch(first_payload))
+            self.assertTrue(llm_dispatcher.dispatch_candidate_batch("aggregation_window"))
+            self.assertTrue(llm_dispatcher.schedule_llm_analysis_dispatch(second_payload))
+            self.assertTrue(llm_dispatcher.dispatch_pending_queue())
+
+        self.assertEqual(
+            [call.kwargs["status"] for call in append_log.call_args_list],
+            ["aggregation_queued", "scheduled", "pending_queued", "scheduled"],
+        )
+
+    def test_queues_runtime_blockage_in_emergency_window_without_cooldown(self):
+        payload = _llm_trigger_payload(step_index=1, event_type="BLOCKAGE_CLOSED")
+
+        with (
+            patch.object(llm_dispatcher.time, "monotonic", return_value=1000.0),
+            patch.object(llm_dispatcher, "append_llm_dispatch_log") as append_log,
+            patch.object(llm_dispatcher, "dispatch_llm_analysis", return_value=object()),
+            patch.object(llm_dispatcher.asyncio, "create_task", side_effect=_close_coroutine),
+        ):
+            self.assertTrue(llm_dispatcher.schedule_llm_analysis_dispatch(payload))
+            self.assertTrue(llm_dispatcher.dispatch_candidate_batch("emergency_aggregation", emergency=True))
+
+        self.assertEqual(
+            [call.kwargs["status"] for call in append_log.call_args_list],
+            ["emergency_queued", "scheduled"],
+        )
+        self.assertEqual(llm_dispatcher.llm_dispatch_cooldown_remaining_seconds(1000.0), 0.0)
 
     def test_response_timeout_is_not_classified_as_dispatch_failed(self):
         payload = _llm_trigger_payload(step_index=1)
@@ -138,7 +175,7 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
 class RiskLifecycleTriggerTests(SimpleTestCase):
     def test_triggers_after_risk_is_sustained_for_delay(self):
         session = _risk_lifecycle_session()
-        risk_result = _critical_risk_result()
+        risk_result = _critical_risk_result(event_type="LINK_SURCHARGE")
 
         with (
             patch.object(runtime_engine, "RISK_LLM_SUSTAIN_SECONDS", 60),
@@ -161,7 +198,7 @@ class RiskLifecycleTriggerTests(SimpleTestCase):
 
     def test_retriggers_when_risk_remains_sustained_after_next_delay(self):
         session = _risk_lifecycle_session()
-        risk_result = _critical_risk_result()
+        risk_result = _critical_risk_result(event_type="LINK_SURCHARGE")
 
         with (
             patch.object(runtime_engine, "RISK_LLM_SUSTAIN_SECONDS", 60),
@@ -182,8 +219,21 @@ class RiskLifecycleTriggerTests(SimpleTestCase):
         self.assertEqual(second_trigger["triggeredIssues"][0]["lastTriggeredStepIndex"], 4)
         self.assertEqual(second_trigger["triggeredIssues"][0]["sustainedSeconds"], 60.0)
 
+    def test_runtime_reverse_flow_triggers_without_sustain_delay(self):
+        session = _risk_lifecycle_session()
+        risk_result = _critical_risk_result(event_type="REVERSE_FLOW")
 
-def _llm_trigger_payload(step_index: int) -> dict:
+        with patch.object(runtime_engine.time, "monotonic", return_value=1000.0):
+            session.step_index = 1
+            result = session.update_risk_issue_lifecycle(risk_result)
+
+        self.assertTrue(result["shouldTrigger"])
+        self.assertEqual(result["reason"], "sustained_risk_with_new_or_escalated_issue")
+        self.assertEqual(result["triggeredIssues"][0]["eventType"], "REVERSE_FLOW")
+
+
+def _llm_trigger_payload(step_index: int, event_type: str = "PREDICTED_FULL_PIPE", source_id: str = "PIPE_1") -> dict:
+    issue_id = f"{event_type}:link:{source_id}"
     return {
         "runId": "test-run",
         "stepIndex": step_index,
@@ -194,12 +244,23 @@ def _llm_trigger_payload(step_index: int) -> dict:
             "contextLevel": "optimal",
             "context": {
                 "highestSeverity": "CRITICAL",
-                "riskEvents": [{"severity": "CRITICAL"}],
+                "riskEvents": [
+                    {
+                        "eventId": issue_id,
+                        "eventType": event_type,
+                        "severity": "CRITICAL",
+                        "source": "link",
+                        "sourceId": source_id,
+                    }
+                ],
             },
             "triggeredIssues": [
                 {
-                    "issueId": f"issue-{step_index}",
+                    "issueId": issue_id,
+                    "eventType": event_type,
                     "severity": "CRITICAL",
+                    "source": "link",
+                    "sourceId": source_id,
                     "lastTriggeredStepIndex": step_index,
                 }
             ],
@@ -208,7 +269,8 @@ def _llm_trigger_payload(step_index: int) -> dict:
 
 
 def _close_coroutine(coroutine):
-    coroutine.close()
+    if hasattr(coroutine, "close"):
+        coroutine.close()
     return None
 
 
@@ -231,12 +293,12 @@ def _risk_lifecycle_session():
     return session
 
 
-def _critical_risk_result():
+def _critical_risk_result(event_type: str = "REVERSE_FLOW"):
     return {
         "events": [
             {
                 "eventId": "event-1",
-                "eventType": "REVERSE_FLOW",
+                "eventType": event_type,
                 "severity": "CRITICAL",
                 "source": "link",
                 "sourceId": "PIPE_1",

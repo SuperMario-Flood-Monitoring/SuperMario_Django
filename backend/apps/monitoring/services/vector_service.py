@@ -33,6 +33,18 @@ def build_embedding_text(event, action) -> str:
         "조치 결과:",
         action.result_status,
     ])
+    if action.result_detail:
+        lines.extend([
+            "",
+            "결과 상세:",
+            action.result_detail,
+        ])
+    if action.recurrence_note:
+        lines.extend([
+            "",
+            "재발 시 참고사항:",
+            action.recurrence_note,
+        ])
     return "\n".join(lines).strip()
 
 

@@ -11,16 +11,16 @@
 
 ## 전체 라우팅
 
-| 구분        | Prefix               | 구현                                  |
-| ----------- | -------------------- | ------------------------------------- |
-| SWMM 엔진   | `/api/engine/`       | `apps/simulation/apis/engine_api.py`  |
-| 에디터 변환 | `/api/editor/`       | `apps/simulation/apis/editor_api.py`  |
-| 시나리오    | `/api/scenarios`     | `apps/scenarios/apis/scenario_api.py` |
-| 시설        | `/api/facilities/`   | `apps/facilities/views.py`            |
-| 위험 로그   | `/api/hazards`       | `apps/monitoring/views.py`            |
+| 구분        | Prefix               | 구현                                         |
+| ----------- | -------------------- | -------------------------------------------- |
+| SWMM 엔진   | `/api/engine/`       | `apps/simulation/apis/engine_api.py`         |
+| 에디터 변환 | `/api/editor/`       | `apps/simulation/apis/editor_api.py`         |
+| 시나리오    | `/api/scenarios`     | `apps/scenarios/apis/scenario_api.py`        |
+| 시설        | `/api/facilities/`   | `apps/facilities/views.py`                   |
+| 위험 로그   | `/api/hazards`       | `apps/monitoring/views.py`                   |
 | 알림 수신자 | `/api/notification/` | `apps/notification/apis/notification_api.py` |
-| 인증        | `/api/auth/`         | `apps/auth/apis.py`                   |
-| 관리자      | `/admin/`            | Django admin                          |
+| 인증        | `/api/auth/`         | `apps/auth/apis.py`                          |
+| 관리자      | `/admin/`            | Django admin                                 |
 
 `ENABLE_LEGACY_SIMULATION_API=true`일 때만 legacy API가
 `/api/legacy-simulations/` 아래에 추가된다. 현재 기본 라우팅에는 예전
@@ -317,7 +317,9 @@ SWMM snapshot 원본 전체는 반환하지 않는다.
 {
   "action_detail": "하류 관로 현장 점검 완료",
   "action_type": "FIELD_CHECK",
+  "result_detail": "토사 제거 후 수위 안정화",
   "result_status": "RESOLVED",
+  "recurrence_note": "폭우 시 상류 맨홀 우선 점검",
   "complete": true
 }
 ```
@@ -326,9 +328,12 @@ SWMM snapshot 원본 전체는 반환하지 않는다.
 `is_deleted=true`, `resolved_at=현재 시각`으로 논리 삭제 처리한다. 동시에
 위험 상황과 조치 내용을 결합한 `embedding_text`를 만들고
 `HazardCaseEmbedding` row에 임시 `vector_id`와 함께 저장한다.
+`complete=false`이면 위험 로그는 `status=IN_PROGRESS`로 변경하고 embedding
+row는 만들지 않는다.
 
 조치 저장 후 Django는 FastAPI/LangChain 서버의 maintenance log endpoint로
-React에서 받은 조치 내용을 원문 그대로 전달한다. FastAPI 요청이 실패해도
+위험 사건, 당시 주요 지표, React에서 받은 조치/결과/재발 참고사항을 구조화해
+전달한다. FastAPI 요청이 실패해도
 `HazardAction` 저장과 완료 처리는 롤백하지 않고, 연동 결과만
 `fastapi_sync`에 기록한다.
 
@@ -336,8 +341,31 @@ Django가 FastAPI로 보내는 body:
 
 ```json
 {
-  "sourceId": "pipe_free_1781771871446",
-  "action_details": "하류 관로 현장 점검 완료"
+  "event": {
+    "id": 1,
+    "run_id": "20260624-164620-7faf56be",
+    "step_index": 3087,
+    "model_time": "2026-06-16T00:51:27",
+    "target_id": "pipe_free_1781771871446",
+    "source": "link",
+    "hazard_type": "REVERSE_FLOW",
+    "hazard_level": "CRITICAL",
+    "hazard_detail": "파이프(pipe_free_1781771871446)에서 역류가 감지되었습니다.",
+    "created_at": "2026-06-26T15:51:00"
+  },
+  "metrics": {
+    "flowCms": -0.034,
+    "direction": "reverse"
+  },
+  "action": {
+    "status": "RESOLVED",
+    "initial_action_detail": "하류 관로 현장 점검 완료",
+    "action_type": "FIELD_CHECK",
+    "result_detail": "토사 제거 후 수위 안정화",
+    "result_status": "RESOLVED",
+    "recurrence_note": "폭우 시 상류 맨홀 우선 점검",
+    "created_at": "2026-06-26T15:52:00"
+  }
 }
 ```
 
@@ -348,6 +376,10 @@ Django가 FastAPI로 보내는 body:
   "id": 1,
   "event_id": 1,
   "action_detail": "하류 관로 현장 점검 완료",
+  "action_type": "FIELD_CHECK",
+  "result_detail": "토사 제거 후 수위 안정화",
+  "result_status": "RESOLVED",
+  "recurrence_note": "폭우 시 상류 맨홀 우선 점검",
   "fastapi_sync": {
     "status": "SENT",
     "vector_id": "fastapi-vector-id",

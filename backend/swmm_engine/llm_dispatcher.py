@@ -10,7 +10,8 @@ import time
 import urllib.error
 import urllib.request
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,9 +24,13 @@ logger = logging.getLogger(__name__)
 PACKAGE_DIR = Path(__file__).resolve().parent
 LLM_DISPATCH_LOG_PATH = PACKAGE_DIR / "logs" / "llm-dispatch.jsonl"
 MAX_REMEMBERED_DISPATCH_KEYS = 1000
-LLM_DISPATCH_COOLDOWN_SECONDS = 60
+LLM_DISPATCH_COOLDOWN_SECONDS = settings.SUPERMARIO_LLM_DISPATCH_COOLDOWN_SECONDS
+LLM_DISPATCH_AGGREGATION_SECONDS = settings.SUPERMARIO_LLM_AGGREGATION_SECONDS
+LLM_DISPATCH_EMERGENCY_AGGREGATION_SECONDS = settings.SUPERMARIO_LLM_EMERGENCY_AGGREGATION_SECONDS
 LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS = 30
 DEFAULT_LANGCHAIN_SITUATION_ID = "약한비"
+CRITICAL_SEVERITY = "CRITICAL"
+EMERGENCY_RUNTIME_EVENT_TYPES = {"BLOCKAGE_CLOSED", "REVERSE_FLOW"}
 LANGCHAIN_SITUATION_LABEL_BY_VALUE = {
     "0": "맑음",
     "0.0": "맑음",
@@ -71,23 +76,33 @@ LLM_CONTEXT_OMIT_KEYS = {
     "tickLogPath",
     "weather",
 }
+
 _scheduled_dispatch_keys: set[str] = set()
 _scheduled_dispatch_key_order: deque[str] = deque()
 _last_llm_dispatch_scheduled_at: float | None = None
+_cooldown_until: float | None = None
+_cooldown_task: asyncio.Task[None] | None = None
+_normal_batch: list["DispatchCandidate"] = []
+_normal_batch_task: asyncio.Task[None] | None = None
+_emergency_batch: list["DispatchCandidate"] = []
+_emergency_batch_task: asyncio.Task[None] | None = None
+_pending_queue: list["DispatchCandidate"] = []
+_pending_signatures: set[str] = set()
+_last_pending_queue_signatures: set[str] = set()
+
+
+@dataclass
+class DispatchCandidate:
+    payload: Mapping[str, Any]
+    trigger: Mapping[str, Any]
+    context: Mapping[str, Any]
+    sanitized_context: Mapping[str, Any]
+    dispatch_key: str
+    signatures: set[str]
 
 
 def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
-    """snapshot이 요청한 LLM 분석 호출을 background task로 예약한다.
-
-    WebSocket broadcast 직전에 호출되며, 같은 위험 trigger 중복과 짧은 시간 안의
-    반복 발송을 막는다.
-
-    반환:
-    - True: 이번 snapshot은 LLM dispatch 대상이라 background task로 예약됨.
-    - False: trigger가 없거나, 중복 또는 쿨다운으로 건너뜀.
-    """
-
-    global _last_llm_dispatch_scheduled_at
+    """LEVEL 23 문자 발송 정책에 따라 LLM 분석 요청을 예약하거나 queue에 넣는다."""
 
     trigger = payload.get("llmTrigger")
     if not isinstance(trigger, Mapping) or not trigger.get("shouldTrigger"):
@@ -100,28 +115,212 @@ def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
     sanitized_context = sanitize_llm_context(context)
 
     dispatch_key = build_llm_dispatch_key(payload, trigger)
-    now = time.monotonic()
-    if not remember_dispatch_key(dispatch_key):
-        return False
-
-    remaining_seconds = llm_dispatch_cooldown_remaining_seconds(now)
-    if remaining_seconds > 0:
+    signatures = critical_issue_signatures(trigger, context)
+    if not signatures:
         append_llm_dispatch_log(
             payload,
             trigger,
             sanitized_context,
             dispatch_key,
-            status="cooldown_skipped",
-            detail={"remainingSeconds": round(remaining_seconds, 3)},
-        )
-        logger.info(
-            "LLM dispatch skipped by cooldown. dispatchKey=%s remainingSeconds=%.3f",
-            dispatch_key,
-            remaining_seconds,
+            status="severity_skipped",
+            detail={"reason": "no_critical_issue"},
         )
         return False
 
-    _last_llm_dispatch_scheduled_at = now
+    if not remember_dispatch_key(dispatch_key):
+        return False
+
+    candidate = DispatchCandidate(
+        payload=payload,
+        trigger=trigger,
+        context=context,
+        sanitized_context=sanitized_context,
+        dispatch_key=dispatch_key,
+        signatures=signatures,
+    )
+
+    if is_emergency_runtime_candidate(trigger, context):
+        return queue_emergency_candidate(candidate)
+
+    now = time.monotonic()
+    expire_cooldown_if_needed(now)
+    if llm_dispatch_cooldown_remaining_seconds(now) > 0:
+        return queue_pending_candidate(candidate, now)
+
+    return queue_normal_candidate(candidate)
+
+
+def queue_normal_candidate(candidate: DispatchCandidate) -> bool:
+    """일반 CRITICAL 위험을 aggregation window에 누적한다."""
+
+    global _normal_batch_task
+
+    if not add_unique_candidate(_normal_batch, candidate):
+        append_llm_dispatch_log(
+            candidate.payload,
+            candidate.trigger,
+            candidate.sanitized_context,
+            candidate.dispatch_key,
+            status="aggregation_duplicate_skipped",
+            detail={"signatures": sorted(candidate.signatures)},
+        )
+        return False
+
+    append_llm_dispatch_log(
+        candidate.payload,
+        candidate.trigger,
+        candidate.sanitized_context,
+        candidate.dispatch_key,
+        status="aggregation_queued",
+        detail={
+            "aggregationSeconds": LLM_DISPATCH_AGGREGATION_SECONDS,
+            "signatures": sorted(candidate.signatures),
+        },
+    )
+    if _normal_batch_task is None or _normal_batch_task.done():
+        _normal_batch_task = asyncio.create_task(flush_normal_batch_after_delay())
+    return True
+
+
+def queue_emergency_candidate(candidate: DispatchCandidate) -> bool:
+    """runtime 막힘/역류 위험을 emergency aggregation window에 누적한다."""
+
+    global _emergency_batch_task
+
+    if not add_unique_candidate(_emergency_batch, candidate):
+        append_llm_dispatch_log(
+            candidate.payload,
+            candidate.trigger,
+            candidate.sanitized_context,
+            candidate.dispatch_key,
+            status="emergency_duplicate_skipped",
+            detail={"signatures": sorted(candidate.signatures)},
+        )
+        return False
+
+    append_llm_dispatch_log(
+        candidate.payload,
+        candidate.trigger,
+        candidate.sanitized_context,
+        candidate.dispatch_key,
+        status="emergency_queued",
+        detail={
+            "aggregationSeconds": LLM_DISPATCH_EMERGENCY_AGGREGATION_SECONDS,
+            "signatures": sorted(candidate.signatures),
+        },
+    )
+    if _emergency_batch_task is None or _emergency_batch_task.done():
+        _emergency_batch_task = asyncio.create_task(flush_emergency_batch_after_delay())
+    return True
+
+
+def queue_pending_candidate(candidate: DispatchCandidate, now: float) -> bool:
+    """cooldown 중 일반 위험을 pending queue에 누적한다."""
+
+    new_signatures = candidate.signatures - _pending_signatures - _last_pending_queue_signatures
+    remaining_seconds = llm_dispatch_cooldown_remaining_seconds(now)
+    if not new_signatures:
+        append_llm_dispatch_log(
+            candidate.payload,
+            candidate.trigger,
+            candidate.sanitized_context,
+            candidate.dispatch_key,
+            status="pending_duplicate_skipped",
+            detail={
+                "remainingSeconds": round(remaining_seconds, 3),
+                "signatures": sorted(candidate.signatures),
+            },
+        )
+        return False
+
+    _pending_queue.append(candidate)
+    _pending_signatures.update(new_signatures)
+    append_llm_dispatch_log(
+        candidate.payload,
+        candidate.trigger,
+        candidate.sanitized_context,
+        candidate.dispatch_key,
+        status="pending_queued",
+        detail={
+            "remainingSeconds": round(remaining_seconds, 3),
+            "signatures": sorted(new_signatures),
+        },
+    )
+    return True
+
+
+async def flush_normal_batch_after_delay() -> None:
+    await asyncio.sleep(max(0.0, LLM_DISPATCH_AGGREGATION_SECONDS))
+    dispatch_candidate_batch("aggregation_window")
+
+
+async def flush_emergency_batch_after_delay() -> None:
+    await asyncio.sleep(max(0.0, LLM_DISPATCH_EMERGENCY_AGGREGATION_SECONDS))
+    dispatch_candidate_batch("emergency_aggregation", emergency=True)
+
+
+async def flush_pending_after_cooldown(delay_seconds: float) -> None:
+    await asyncio.sleep(max(0.0, delay_seconds))
+    expire_cooldown_if_needed(time.monotonic(), force=True)
+
+
+def dispatch_candidate_batch(reason: str, *, emergency: bool = False) -> bool:
+    """현재 batch를 하나의 LLM 요청으로 묶어 예약한다."""
+
+    global _normal_batch, _normal_batch_task, _emergency_batch, _emergency_batch_task
+
+    if emergency:
+        candidates = list(_emergency_batch)
+        _emergency_batch = []
+        _emergency_batch_task = None
+        apply_cooldown = False
+    else:
+        candidates = list(_normal_batch)
+        _normal_batch = []
+        _normal_batch_task = None
+        apply_cooldown = True
+
+    if not candidates:
+        return False
+
+    payload, trigger, context, dispatch_key = merge_dispatch_candidates(candidates, reason)
+    schedule_dispatch_now(payload, trigger, context, dispatch_key, apply_cooldown=apply_cooldown)
+    return True
+
+
+def dispatch_pending_queue(reason: str = "cooldown_window_elapsed") -> bool:
+    """cooldown 종료 시 pending queue를 하나의 LLM 요청으로 묶어 예약한다."""
+
+    global _pending_queue, _pending_signatures, _last_pending_queue_signatures
+
+    candidates = list(_pending_queue)
+    _pending_queue = []
+    sent_signatures = set(_pending_signatures)
+    _pending_signatures = set()
+    if not candidates:
+        _last_pending_queue_signatures = set()
+        return False
+
+    payload, trigger, context, dispatch_key = merge_dispatch_candidates(candidates, reason)
+    _last_pending_queue_signatures = sent_signatures
+    schedule_dispatch_now(payload, trigger, context, dispatch_key, apply_cooldown=True)
+    return True
+
+
+def schedule_dispatch_now(
+    payload: Mapping[str, Any],
+    trigger: Mapping[str, Any],
+    context: Mapping[str, Any],
+    dispatch_key: str,
+    *,
+    apply_cooldown: bool,
+) -> None:
+    """묶음이 확정된 LLM 요청을 즉시 background task로 예약한다."""
+
+    global _last_llm_dispatch_scheduled_at
+
+    sanitized_context = sanitize_llm_context(context)
+    _last_llm_dispatch_scheduled_at = time.monotonic()
     append_llm_dispatch_log(payload, trigger, sanitized_context, dispatch_key, status="scheduled")
     logger.warning(
         "LLM dispatch scheduled. dispatchKey=%s runId=%s stepIndex=%s reason=%s issues=%s",
@@ -132,18 +331,157 @@ def schedule_llm_analysis_dispatch(payload: Mapping[str, Any]) -> bool:
         summarize_triggered_issues(trigger),
     )
     asyncio.create_task(dispatch_llm_analysis(payload, trigger, sanitized_context, dispatch_key))
-    return True
+    if apply_cooldown:
+        start_dispatch_cooldown()
+
+
+def start_dispatch_cooldown() -> None:
+    """일반 문자 발송 후 cooldown window를 시작한다."""
+
+    global _cooldown_until, _cooldown_task
+
+    now = time.monotonic()
+    _cooldown_until = now + max(0.0, LLM_DISPATCH_COOLDOWN_SECONDS)
+    if _cooldown_task is None or _cooldown_task.done():
+        _cooldown_task = asyncio.create_task(flush_pending_after_cooldown(LLM_DISPATCH_COOLDOWN_SECONDS))
+
+
+def expire_cooldown_if_needed(now: float, *, force: bool = False) -> None:
+    """cooldown이 끝났으면 pending queue를 flush한다."""
+
+    global _cooldown_until, _cooldown_task
+
+    if _cooldown_until is None:
+        return
+    if not force and now < _cooldown_until:
+        return
+    _cooldown_until = None
+    _cooldown_task = None
+    dispatch_pending_queue()
 
 
 def llm_dispatch_cooldown_remaining_seconds(now: float | None = None) -> float:
-    """다음 LLM 발송까지 남은 쿨다운 시간을 초 단위로 반환한다."""
+    """다음 일반 LLM 발송까지 남은 cooldown 시간을 초 단위로 반환한다."""
 
-    if _last_llm_dispatch_scheduled_at is None:
+    if _cooldown_until is None:
         return 0.0
 
     current_time = time.monotonic() if now is None else now
-    elapsed_seconds = current_time - _last_llm_dispatch_scheduled_at
-    return max(0.0, LLM_DISPATCH_COOLDOWN_SECONDS - elapsed_seconds)
+    return max(0.0, _cooldown_until - current_time)
+
+
+def add_unique_candidate(batch: list[DispatchCandidate], candidate: DispatchCandidate) -> bool:
+    existing_signatures = set().union(*(item.signatures for item in batch)) if batch else set()
+    if candidate.signatures <= existing_signatures:
+        return False
+    batch.append(candidate)
+    return True
+
+
+def merge_dispatch_candidates(
+    candidates: list[DispatchCandidate],
+    reason: str,
+) -> tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any], str]:
+    """여러 후보의 위험 이벤트를 하나의 LLM trigger/context로 병합한다."""
+
+    first = candidates[0]
+    payload = dict(first.payload)
+    trigger = dict(first.trigger)
+    context = dict(first.context)
+    trigger["reason"] = reason
+
+    triggered_issues = merge_records(
+        [issue for candidate in candidates for issue in candidate.trigger.get("triggeredIssues") or []],
+        key_for_issue,
+    )
+    risk_events = merge_records(
+        [event for candidate in candidates for event in candidate.context.get("riskEvents") or []],
+        key_for_issue,
+    )
+    forecast_predictions = merge_records(
+        [prediction for candidate in candidates for prediction in candidate.context.get("forecastPredictions") or []],
+        key_for_prediction,
+    )
+    trigger["triggeredIssues"] = triggered_issues
+    context["riskEvents"] = risk_events
+    if forecast_predictions:
+        context["forecastPredictions"] = forecast_predictions
+    context["highestSeverity"] = CRITICAL_SEVERITY
+    payload["llmTrigger"] = trigger
+    dispatch_key = build_llm_dispatch_key(payload, trigger)
+    return payload, trigger, context, dispatch_key
+
+
+def merge_records(records: list[Any], key_builder: Callable[[Mapping[str, Any]], str]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        key = key_builder(record)
+        if key not in merged:
+            merged[key] = dict(record)
+    return list(merged.values())
+
+
+def critical_issue_signatures(trigger: Mapping[str, Any], context: Mapping[str, Any]) -> set[str]:
+    records = list(trigger.get("triggeredIssues") or []) + list(context.get("riskEvents") or [])
+    return {
+        key_for_issue(record)
+        for record in records
+        if isinstance(record, Mapping) and str(record.get("severity") or "").upper() == CRITICAL_SEVERITY
+    }
+
+
+def is_emergency_runtime_candidate(trigger: Mapping[str, Any], context: Mapping[str, Any]) -> bool:
+    if str(trigger.get("contextLevel") or context.get("contextLevel") or "").lower() == "forecast":
+        return False
+    records = list(trigger.get("triggeredIssues") or []) + list(context.get("riskEvents") or [])
+    return any(
+        isinstance(record, Mapping)
+        and str(record.get("severity") or "").upper() == CRITICAL_SEVERITY
+        and str(record.get("eventType") or "") in EMERGENCY_RUNTIME_EVENT_TYPES
+        for record in records
+    )
+
+
+def key_for_issue(issue: Mapping[str, Any]) -> str:
+    event_type = str(issue.get("eventType") or "")
+    source = str(issue.get("source") or "")
+    source_id = str(issue.get("sourceId") or "")
+    if event_type or source or source_id:
+        return ":".join([event_type or "UNKNOWN_EVENT", source or "unknown_source", source_id or "unknown_source_id"])
+    return str(issue.get("issueId") or issue.get("eventId") or "unknown_issue")
+
+
+def key_for_prediction(prediction: Mapping[str, Any]) -> str:
+    return ":".join(
+        [
+            str(prediction.get("hazardType") or prediction.get("eventType") or "UNKNOWN_EVENT"),
+            str(prediction.get("source") or "unknown_source"),
+            str(prediction.get("targetId") or prediction.get("sourceId") or "unknown_source_id"),
+        ]
+    )
+
+
+def reset_dispatch_policy_state() -> None:
+    """테스트와 개발 서버 재초기화에 사용하는 in-memory dispatch 정책 상태 초기화."""
+
+    global _last_llm_dispatch_scheduled_at, _cooldown_until, _cooldown_task
+    global _normal_batch, _normal_batch_task, _emergency_batch, _emergency_batch_task
+    global _pending_queue, _pending_signatures, _last_pending_queue_signatures
+
+    _scheduled_dispatch_keys.clear()
+    _scheduled_dispatch_key_order.clear()
+    _last_llm_dispatch_scheduled_at = None
+    _cooldown_until = None
+    _cooldown_task = None
+    _normal_batch = []
+    _normal_batch_task = None
+    _emergency_batch = []
+    _emergency_batch_task = None
+    _pending_queue = []
+    _pending_signatures = set()
+    _last_pending_queue_signatures = set()
 
 
 async def dispatch_llm_analysis(

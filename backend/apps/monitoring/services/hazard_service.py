@@ -178,7 +178,9 @@ def complete_hazard_action(event_id: int, payload: Mapping[str, Any]) -> HazardA
             event=event,
             action_detail=action_detail,
             action_type=str(payload.get("action_type") or "").strip(),
+            result_detail=str(payload.get("result_detail") or "").strip(),
             result_status=str(payload.get("result_status") or "").strip(),
+            recurrence_note=str(payload.get("recurrence_note") or "").strip(),
         )
 
         is_complete = bool(payload.get("complete", True))
@@ -204,6 +206,9 @@ def complete_hazard_action(event_id: int, payload: Mapping[str, Any]) -> HazardA
                 vector_id=vector_id,
                 metadata=metadata,
             )
+        else:
+            event.status = HazardEvent.Status.IN_PROGRESS
+            event.save(update_fields=["status", "updated_at"])
 
     dispatch_maintenance_log(action)
     action.refresh_from_db()

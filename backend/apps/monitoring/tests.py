@@ -115,7 +115,9 @@ class HazardApiTests(TestCase):
                     {
                         "action_detail": "하류 관로 현장 점검 완료",
                         "action_type": "FIELD_CHECK",
+                        "result_detail": "토사 제거 후 수위 안정화",
                         "result_status": "RESOLVED",
+                        "recurrence_note": "폭우 시 상류 맨홀 우선 점검",
                         "complete": True,
                     }
                 ),
@@ -130,14 +132,17 @@ class HazardApiTests(TestCase):
         self.assertTrue(event.is_deleted)
         self.assertEqual(action.fastapi_sync_status, HazardAction.FastApiSyncStatus.SENT)
         self.assertEqual(action.fastapi_vector_id, "vector-1")
-        post_maintenance_log.assert_called_once_with(
-            {
-                "sourceId": "PIPE_1",
-                "action_details": "하류 관로 현장 점검 완료",
-            }
-        )
+        dispatched_payload = post_maintenance_log.call_args.args[0]
+        self.assertEqual(dispatched_payload["event"]["target_id"], "PIPE_1")
+        self.assertEqual(dispatched_payload["event"]["hazard_type"], "REVERSE_FLOW")
+        self.assertEqual(dispatched_payload["metrics"]["flowCms"], -0.25)
+        self.assertEqual(dispatched_payload["action"]["initial_action_detail"], "하류 관로 현장 점검 완료")
+        self.assertEqual(dispatched_payload["action"]["result_detail"], "토사 제거 후 수위 안정화")
+        self.assertEqual(dispatched_payload["action"]["recurrence_note"], "폭우 시 상류 맨홀 우선 점검")
         self.assertEqual(HazardCaseEmbedding.objects.count(), 1)
-        self.assertIn("하류 관로 현장 점검 완료", HazardCaseEmbedding.objects.get().embedding_text)
+        embedding_text = HazardCaseEmbedding.objects.get().embedding_text
+        self.assertIn("하류 관로 현장 점검 완료", embedding_text)
+        self.assertIn("폭우 시 상류 맨홀 우선 점검", embedding_text)
 
     def test_incomplete_action_does_not_resolve_or_create_embedding_record(self):
         event = HazardEvent.objects.create(
@@ -171,7 +176,7 @@ class HazardApiTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         event.refresh_from_db()
-        self.assertEqual(event.status, HazardEvent.Status.OPEN)
+        self.assertEqual(event.status, HazardEvent.Status.IN_PROGRESS)
         self.assertFalse(event.is_deleted)
         self.assertEqual(HazardAction.objects.count(), 1)
         self.assertEqual(HazardAction.objects.get().fastapi_sync_status, HazardAction.FastApiSyncStatus.SENT)
@@ -261,7 +266,7 @@ def _critical_tick():
 
 
 class MaintenanceDispatcherTests(TestCase):
-    def test_builds_fastapi_payload_with_prompt_level_19_keys(self):
+    def test_builds_fastapi_payload_with_prompt_level_25_shape(self):
         event = HazardEvent.objects.create(
             event_key="run-1:REVERSE_FLOW:PIPE_1:CRITICAL",
             run_id="run-1",
@@ -270,16 +275,27 @@ class MaintenanceDispatcherTests(TestCase):
             hazard_level="CRITICAL",
             hazard_type="REVERSE_FLOW",
             hazard_detail="역류 감지",
+            metrics_snapshot={"flowCms": -0.25, "direction": "reverse"},
         )
-        action = HazardAction.objects.create(event=event, action_detail="원문 조치 내용")
+        action = HazardAction.objects.create(
+            event=event,
+            action_detail="원문 조치 내용",
+            action_type="FIELD_CHECK",
+            result_detail="현장 확인 완료",
+            result_status="RESOLVED",
+            recurrence_note="역류 시 하류 관로 우선 확인",
+        )
 
-        self.assertEqual(
-            build_maintenance_log_payload(action),
-            {
-                "sourceId": "PIPE_1",
-                "action_details": "원문 조치 내용",
-            },
-        )
+        payload = build_maintenance_log_payload(action)
+
+        self.assertEqual(payload["event"]["id"], event.id)
+        self.assertEqual(payload["event"]["target_id"], "PIPE_1")
+        self.assertEqual(payload["event"]["hazard_type"], "REVERSE_FLOW")
+        self.assertEqual(payload["event"]["hazard_level"], "CRITICAL")
+        self.assertEqual(payload["metrics"], {"flowCms": -0.25, "direction": "reverse"})
+        self.assertEqual(payload["action"]["initial_action_detail"], "원문 조치 내용")
+        self.assertEqual(payload["action"]["result_detail"], "현장 확인 완료")
+        self.assertEqual(payload["action"]["recurrence_note"], "역류 시 하류 관로 우선 확인")
 
     def test_dispatch_records_vector_id_from_fastapi_response(self):
         event = HazardEvent.objects.create(

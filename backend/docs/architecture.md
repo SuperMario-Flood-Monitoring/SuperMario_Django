@@ -66,7 +66,7 @@ flowchart LR
 | `swmm_engine/converter`         | React editor layout JSON을 SWMM INP/report/mapping으로 변환                     |
 | `swmm_engine/engine`            | PySWMM 세션 생성, tick loop, pause/resume/stop/control 처리                     |
 | `swmm_engine/risk`              | snapshot 구조 검증, deterministic 위험 이벤트 판정, LLM context 생성            |
-| `swmm_engine/llm_dispatcher.py` | 위험 snapshot을 외부 LLM 서버로 전송하고 LangChain 상황 ID와 알림 쿨다운을 관리 |
+| `swmm_engine/llm_dispatcher.py` | 위험 snapshot을 외부 LLM 서버로 전송하고 LangChain 상황 ID와 문자 발송 묶음/cooldown 정책을 관리 |
 | `legacy`                        | 예전 `/api/simulations/` 흐름과 테스트 보관                                     |
 | `backend/docs`                  | 현재 구현 기준 기술 문서                                                        |
 
@@ -156,17 +156,18 @@ flowchart LR
    않는다.
 3. 상세 조회 `GET /api/hazards/{id}`는 해당 위험 대상의 당시 수치만
    `metrics_snapshot`으로 반환한다.
-4. 관리자가 `POST /api/hazards/{id}/actions`로 조치 내용을 저장하면
-   `HazardAction`이 생성된다.
-5. `complete=true`이면 `HazardEvent`는 실제 삭제하지 않고 `status=RESOLVED`,
+4. 관리자가 `POST /api/hazards/{id}/actions`로 조치 내용, 결과 상세, 재발 시
+   참고사항을 저장하면 `HazardAction`이 생성된다.
+5. `complete=false`이면 `HazardEvent`는 `status=IN_PROGRESS`로 변경된다.
+6. `complete=true`이면 `HazardEvent`는 실제 삭제하지 않고 `status=RESOLVED`,
    `is_deleted=true`, `resolved_at=현재 시각`으로 논리 삭제된다.
-6. 조치 저장 시 위험 상황과 조치 내용을 결합한 `embedding_text`를 만들고
+7. 조치 저장 시 위험 상황과 조치 내용을 결합한 `embedding_text`를 만들고
    `HazardCaseEmbedding`에 저장한다. 현재 VectorDB 연동은 MVP 더미 구현으로
    `hazard-case-{uuid}` 형식의 `vector_id`만 생성한다.
-7. Django는 같은 조치 내용을 FastAPI/LangChain 서버의 maintenance log endpoint로
-   POST한다. 요청 body는 `{"sourceId": target_id, "action_details": action_detail}`
-   형식이며, `action_detail`은 React에서 받은 원문을 그대로 사용한다.
-8. FastAPI 응답의 `vector_id` 또는 실패 메시지는 `HazardAction`의
+8. Django는 위험 사건, 당시 주요 지표, 조치/결과/재발 참고사항을 구조화해
+   FastAPI/LangChain 서버의 maintenance log endpoint로 POST한다. 요청 body는
+   `event`, `metrics`, `action` 객체를 포함한다.
+9. FastAPI 응답의 `vector_id` 또는 실패 메시지는 `HazardAction`의
    `fastapi_*` 필드에 저장한다. FastAPI 연동 실패는 조치 저장과 위험 로그 완료
    처리를 롤백하지 않는다.
 

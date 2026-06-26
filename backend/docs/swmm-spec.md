@@ -305,13 +305,15 @@ context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역
 조회한다. `bot_token` row가 없으면 `TELEGRAM_BOT_TOKEN`은 `null`, 대상자가
 없으면 `TELEGRAM_CHAT_ID`는 빈 배열이다.
 
-LLM 발송은 위험한 수준의 이슈가 `LLM_DISPATCH_COOLDOWN_SECONDS` 동안 계속
-유지된 뒤에만 예약한다. 발송 뒤에도 같은 위험 이슈가 계속 유지되면 다시 같은
-시간을 기다린 뒤 재발송할 수 있다. 한 번 발송을 예약하면 쿨다운이 끝날 때까지
-새 위험 trigger가 발생해도 LangChain 요청은 생성하지 않는다.
-다만 후보 기록은 `llm-dispatch.jsonl`에 `cooldown_skipped` 상태로 남긴다.
-쿨다운 이후 새 위험 trigger가 다시 발생하면 다시 LangChain 요청을 예약하고,
-그 시점을 기준으로 다음 쿨다운을 시작한다.
+LLM 발송은 `backend/docs/notification-dispatch-policy.md`의 문자 발송 정책을
+따른다. 일반 CRITICAL 위험은 `SUPERMARIO_LLM_AGGREGATION_SECONDS` 동안 묶은 뒤
+1회 발송하고, 발송 요청 시점부터 `SUPERMARIO_LLM_DISPATCH_COOLDOWN_SECONDS`
+동안 새 일반 위험을 pending queue에 누적한다. cooldown 이후 pending queue에
+남은 위험은 하나의 묶음 요청으로 발송한다.
+
+runtime risk 기준의 `BLOCKAGE_CLOSED`, `REVERSE_FLOW`는 일반 cooldown 예외이며
+`SUPERMARIO_LLM_EMERGENCY_AGGREGATION_SECONDS` 동안 묶어 발송한다. forecast의
+`PREDICTED_BLOCKAGE_CLOSED`는 일반 forecast CRITICAL 위험으로 처리한다.
 
 LangChain 응답 대기 시간은 `LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS` 상수로
 관리한다. 응답 timeout은 Telegram/SNS 발송 같은 LangChain 서버 내부 처리가 이미

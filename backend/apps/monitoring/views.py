@@ -83,7 +83,9 @@ class HazardActionView(View):
                 "event_id": action.event_id,
                 "action_detail": action.action_detail,
                 "action_type": action.action_type,
+                "result_detail": action.result_detail,
                 "result_status": action.result_status,
+                "recurrence_note": action.recurrence_note,
                 "fastapi_sync": {
                     "status": action.fastapi_sync_status,
                     "vector_id": action.fastapi_vector_id,
