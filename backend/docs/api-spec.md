@@ -3,7 +3,7 @@
 ## 문서 정보
 
 - 기준일: 2026-06-23
-- 기준 구현: `config/urls.py`, `apps/*/urls.py`, `apps/*/apis/*.py`, `apps/facilities/views.py`
+- 기준 구현: `config/urls.py`, `apps/*/urls.py`, `apps/*/apis/*.py`, `apps/facilities/views.py`, `apps/monitoring/views.py`
 - Base URL: `http://127.0.0.1:8000`
 - Content-Type: `application/json`
 - 인증: `/api/auth/login`, `/api/auth/refresh`, `/api/engine/health`를 제외한
@@ -11,15 +11,16 @@
 
 ## 전체 라우팅
 
-| 구분 | Prefix | 구현 |
-| --- | --- | --- |
-| SWMM 엔진 | `/api/engine/` | `apps/simulation/apis/engine_api.py` |
-| 에디터 변환 | `/api/editor/` | `apps/simulation/apis/editor_api.py` |
-| 시나리오 | `/api/scenarios` | `apps/scenarios/apis/scenario_api.py` |
-| 시설 | `/api/facilities/` | `apps/facilities/views.py` |
-| 알림 수신자 | `/api/notification/` | `apps/notification/views.py` |
-| 인증 | `/api/auth/` | `apps/auth/apis.py` |
-| 관리자 | `/admin/` | Django admin |
+| 구분        | Prefix               | 구현                                  |
+| ----------- | -------------------- | ------------------------------------- |
+| SWMM 엔진   | `/api/engine/`       | `apps/simulation/apis/engine_api.py`  |
+| 에디터 변환 | `/api/editor/`       | `apps/simulation/apis/editor_api.py`  |
+| 시나리오    | `/api/scenarios`     | `apps/scenarios/apis/scenario_api.py` |
+| 시설        | `/api/facilities/`   | `apps/facilities/views.py`            |
+| 위험 로그   | `/api/hazards`       | `apps/monitoring/views.py`            |
+| 알림 수신자 | `/api/notification/` | `apps/notification/views.py`          |
+| 인증        | `/api/auth/`         | `apps/auth/apis.py`                   |
+| 관리자      | `/admin/`            | Django admin                          |
 
 `ENABLE_LEGACY_SIMULATION_API=true`일 때만 legacy API가
 `/api/legacy-simulations/` 아래에 추가된다. 현재 기본 라우팅에는 예전
@@ -181,6 +182,183 @@ ADMIN access token이 필요하다.
 - Path: `/api/notification/{id}`
 - 성공: `200 OK`
 
+## 위험 로그 API
+
+ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
+`risk.events` 중 `severity=CRITICAL` 이벤트를 `apps.monitoring`이 저장한
+데이터다. 목록 API는 React Grid 표시용 DTO만 반환하며, 원본 수치 전체는 상세
+조회에서만 `metrics_snapshot`으로 반환한다.
+
+### 위험 로그 목록 조회
+
+- Method: `GET`
+- Path: `/api/hazards`
+- Query: `status=OPEN`, `includeDeleted=false`
+- 성공: `200 OK`
+
+응답은 배열이다.
+
+```json
+[
+  {
+    "id": 1,
+    "target_id": "pipe_free_1781771871446",
+    "pipe_id": "pipe_free_1781771871446",
+    "source": "link",
+    "hazard_level": "CRITICAL",
+    "hazard_type": "REVERSE_FLOW",
+    "hazard_detail": "파이프(pipe_free_1781771871446)에서 역류가 감지되었습니다.",
+    "status": "OPEN",
+    "created_at": "2026-06-25T12:00:00"
+  }
+]
+```
+
+`source`가 `link`가 아니면 `pipe_id`는 `null`일 수 있다. 이 저장소는 React
+클라이언트를 포함하지 않으므로 현재는 클라이언트가 3초 polling 등으로 이 API를
+호출하는 방식만 제공한다.
+
+### 10분 위험 예측 조회
+
+- Method: `GET`
+- Path: `/api/hazards/forecast`
+- Query: `minutes=10`
+- 성공: `200 OK`
+
+이 API는 DB나 JSONL 로그가 아니라 현재 Django runtime state의 메모리 buffer에
+쌓인 최근 snapshot 샘플을 기준으로 한다. 기본 horizon은
+`SUPERMARIO_FORECAST_MINUTES=10`이며, 최근
+`SUPERMARIO_FORECAST_WINDOW_SECONDS=120`초 변화량을 이용해 예측한다. 시작
+직후 과대 예측을 줄이기 위해 기본 `SUPERMARIO_FORECAST_MIN_OBSERVATION_SECONDS=60`
+초 이상의 관측 구간이 필요하며, 예측값이 위험 기준을 넘더라도 현재 수위가
+강수 상황별 최소 현재값보다 낮으면 위험 이벤트로 만들지 않는다. 단,
+`blockageRatio`는 React 제어에서 직접 들어오는 현재 막힘 상태이므로 최소 관측
+시간과 수위 최소 조건을 적용하지 않고 별도 위험 이벤트로 만든다.
+
+```json
+{
+  "ok": true,
+  "forecastMinutes": 10,
+  "windowSeconds": 120,
+  "sampleCount": 121,
+  "runId": "20260624-164620-7faf56be",
+  "stepIndex": 121,
+  "modelTime": "2026-06-16T00:02:01",
+  "highestSeverity": "WARNING",
+  "events": [
+    {
+      "eventId": "PREDICTED_FULL_PIPE:link:PIPE_1",
+      "eventType": "PREDICTED_FULL_PIPE",
+      "severity": "WARNING",
+      "source": "link",
+      "sourceId": "PIPE_1",
+      "metrics": {
+        "metric": "fullness",
+        "currentValue": 0.2,
+        "predictedValue": 0.7,
+        "slopePerSecond": 0.0008333333333333334,
+        "minCurrentValue": 0.05,
+        "rainfallLevel": "heavy",
+        "forecastMinutes": 10
+      },
+      "reason": "10분 뒤 fullness 위험이 예측되었습니다."
+    }
+  ],
+  "predictions": []
+}
+```
+
+현재 예측 대상 metric은 `links.fullness`, `links.capacityRatio`,
+`links.blockageRatio`, `nodes.depthRatio`, `nodes.floodingCms`이다.
+`links.blockageRatio >= 1.0`은 `PREDICTED_BLOCKAGE_CLOSED` CRITICAL,
+`0.8 <= links.blockageRatio < 1.0`은 `PREDICTED_BLOCKAGE_HIGH` WARNING으로
+처리한다. 예측은 SWMM `stepIndex`와
+`stepSeconds`를 기준으로 한 모델 시간 기준이며, 브라우저/서버 벽시계 시간과
+다를 수 있다.
+
+### 위험 로그 상세 조회
+
+- Method: `GET`
+- Path: `/api/hazards/{hazard_id}`
+- 성공: `200 OK`
+- 실패: `404 Not Found`
+
+상세 응답에는 당시 대상 node/link 수치만 `metrics_snapshot`으로 포함한다.
+SWMM snapshot 원본 전체는 반환하지 않는다.
+
+```json
+{
+  "id": 1,
+  "target_id": "pipe_free_1781771871446",
+  "source": "link",
+  "hazard_level": "CRITICAL",
+  "hazard_type": "REVERSE_FLOW",
+  "hazard_detail": "파이프(pipe_free_1781771871446)에서 역류가 감지되었습니다.",
+  "status": "OPEN",
+  "run_id": "20260624-164620-7faf56be",
+  "step_index": 3087,
+  "model_time": "2026-06-16T00:51:27",
+  "metrics_snapshot": {
+    "flowCms": -0.034,
+    "direction": "reverse"
+  },
+  "actions": []
+}
+```
+
+### 위험 로그 조치 저장
+
+- Method: `POST`
+- Path: `/api/hazards/{hazard_id}/actions`
+- 성공: `201 Created`
+- 실패: `400 Bad Request`, `404 Not Found`
+
+```json
+{
+  "action_detail": "하류 관로 현장 점검 완료",
+  "action_type": "FIELD_CHECK",
+  "result_status": "RESOLVED",
+  "complete": true
+}
+```
+
+`complete=true`이면 위험 로그는 실제 삭제하지 않고 `status=RESOLVED`,
+`is_deleted=true`, `resolved_at=현재 시각`으로 논리 삭제 처리한다. 동시에
+위험 상황과 조치 내용을 결합한 `embedding_text`를 만들고
+`HazardCaseEmbedding` row에 임시 `vector_id`와 함께 저장한다.
+
+조치 저장 후 Django는 FastAPI/LangChain 서버의 maintenance log endpoint로
+React에서 받은 조치 내용을 원문 그대로 전달한다. FastAPI 요청이 실패해도
+`HazardAction` 저장과 완료 처리는 롤백하지 않고, 연동 결과만
+`fastapi_sync`에 기록한다.
+
+Django가 FastAPI로 보내는 body:
+
+```json
+{
+  "sourceId": "pipe_free_1781771871446",
+  "action_details": "하류 관로 현장 점검 완료"
+}
+```
+
+조치 저장 응답의 주요 필드:
+
+```json
+{
+  "id": 1,
+  "event_id": 1,
+  "action_detail": "하류 관로 현장 점검 완료",
+  "fastapi_sync": {
+    "status": "SENT",
+    "vector_id": "fastapi-vector-id",
+    "error_message": ""
+  }
+}
+```
+
+FastAPI endpoint URL은 `SUPERMARIO_LLM_MAINTENANCE_LOG_URL` 환경변수로
+설정하며, 기본값은 `SUPERMARIO_LLM_BASE_URL + /maintenance/log/`이다.
+
 ### 로그아웃
 
 - Method: `POST`
@@ -229,14 +407,14 @@ ADMIN access token이 필요하다.
 }
 ```
 
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `name` | string | 예 | 공백 불가, 전체 시설에서 유일 |
-| `facility_type` | string | 아니요 | 기본 `OTHER` |
-| `location` | string | 아니요 | 위치 설명 |
-| `normal_value` | number | 아니요 | 기본 `0.0` |
-| `unit` | string | 아니요 | 단위 |
-| `metadata` | object | 아니요 | 확장 데이터 |
+| 필드            | 타입   | 필수   | 설명                          |
+| --------------- | ------ | ------ | ----------------------------- |
+| `name`          | string | 예     | 공백 불가, 전체 시설에서 유일 |
+| `facility_type` | string | 아니요 | 기본 `OTHER`                  |
+| `location`      | string | 아니요 | 위치 설명                     |
+| `normal_value`  | number | 아니요 | 기본 `0.0`                    |
+| `unit`          | string | 아니요 | 단위                          |
+| `metadata`      | object | 아니요 | 확장 데이터                   |
 
 허용 시설 유형은 `DRAINAGE_PIPE`, `CATCH_BASIN`, `MANHOLE`, `PUMP`,
 `OTHER`이다.
@@ -303,11 +481,11 @@ ADMIN access token이 필요하다.
 }
 ```
 
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `title` | string | 예 | 1~100자, trim 후 공백 불가 |
-| `description` | string | 아니요 | 기본 빈 문자열 |
-| `layoutJson` | object | 예 | React editor layout JSON |
+| 필드          | 타입   | 필수   | 설명                       |
+| ------------- | ------ | ------ | -------------------------- |
+| `title`       | string | 예     | 1~100자, trim 후 공백 불가 |
+| `description` | string | 아니요 | 기본 빈 문자열             |
+| `layoutJson`  | object | 예     | React editor layout JSON   |
 
 ### 시나리오 상세 조회
 
@@ -370,18 +548,18 @@ ADMIN access token이 필요하다.
 
 주요 응답 필드는 다음과 같다.
 
-| 필드 | 타입 | 설명 |
-| --- | --- | --- |
-| `ok` | boolean | 응답 성공 여부 |
-| `running` | boolean | tick loop 실행 여부 |
-| `paused` | boolean | 세션이 일시정지 상태인지 여부 |
-| `hasSession` | boolean | SWMM 세션 존재 여부 |
-| `stepIndex` | integer | 현재 tick 번호 |
-| `stepSeconds` | integer | SWMM step 간격 |
-| `modelTime` | string, null | SWMM 모델 시각 |
-| `control` | object | 현재 강수, 막힘, 배속 제어값 |
-| `websocketClients` | integer | 연결된 WebSocket 클라이언트 수 |
-| `lastError` | string, null | 마지막 런타임 오류 |
+| 필드               | 타입         | 설명                           |
+| ------------------ | ------------ | ------------------------------ |
+| `ok`               | boolean      | 응답 성공 여부                 |
+| `running`          | boolean      | tick loop 실행 여부            |
+| `paused`           | boolean      | 세션이 일시정지 상태인지 여부  |
+| `hasSession`       | boolean      | SWMM 세션 존재 여부            |
+| `stepIndex`        | integer      | 현재 tick 번호                 |
+| `stepSeconds`      | integer      | SWMM step 간격                 |
+| `modelTime`        | string, null | SWMM 모델 시각                 |
+| `control`          | object       | 현재 강수, 막힘, 배속 제어값   |
+| `websocketClients` | integer      | 연결된 WebSocket 클라이언트 수 |
+| `lastError`        | string, null | 마지막 런타임 오류             |
 
 ### 엔진 시작
 
@@ -413,14 +591,14 @@ PySWMM 세션을 시작한다. 변환 오류가 있으면 `422`를 반환한다.
 
 성공 응답은 다음 필드를 포함한다.
 
-| 필드 | 설명 |
-| --- | --- |
-| `ok` | 성공 여부 |
-| `running` | 시작 직후 실행 여부 |
-| `status` | 현재 엔진 상태 |
-| `report` | layout 변환 리포트 |
-| `mapping` | React editor 객체와 SWMM 객체 매핑 |
-| `snapshot` | 시작 직후 snapshot |
+| 필드       | 설명                               |
+| ---------- | ---------------------------------- |
+| `ok`       | 성공 여부                          |
+| `running`  | 시작 직후 실행 여부                |
+| `status`   | 현재 엔진 상태                     |
+| `report`   | layout 변환 리포트                 |
+| `mapping`  | React editor 객체와 SWMM 객체 매핑 |
+| `snapshot` | 시작 직후 snapshot                 |
 
 ### 엔진 리셋
 
@@ -450,25 +628,25 @@ PySWMM 세션을 시작한다. 변환 오류가 있으면 `422`를 반환한다.
 }
 ```
 
-| 필드 | 타입 | 설명 |
-| --- | --- | --- |
-| `rainfall` | number | `rainfallRatio`와 같은 입력으로 처리 |
-| `rainfallRatio` | number | 0~1000 범위로 제한, 1 초과 값은 percent로 간주해 /100 |
-| `rainfallPercent` | number | DTO에서 허용하지만 현재 엔진 제어에는 직접 사용하지 않음 |
-| `maxRainfallMmPerHour` | number | DTO에서 허용, 시작 payload의 최대 강수량과 함께 사용 |
-| `speedMultiplier` | number | 1~10 범위 |
-| `blockagesById` | object | SWMM link 또는 node ID별 막힘 비율 |
-| `exceptions` | array | `{ blockage, swmmLinks }` 형태의 예외 막힘 입력 |
+| 필드                   | 타입   | 설명                                                     |
+| ---------------------- | ------ | -------------------------------------------------------- |
+| `rainfall`             | number | `rainfallRatio`와 같은 입력으로 처리                     |
+| `rainfallRatio`        | number | 0~1000 범위로 제한, 1 초과 값은 percent로 간주해 /100    |
+| `rainfallPercent`      | number | DTO에서 허용하지만 현재 엔진 제어에는 직접 사용하지 않음 |
+| `maxRainfallMmPerHour` | number | DTO에서 허용, 시작 payload의 최대 강수량과 함께 사용     |
+| `speedMultiplier`      | number | 1~10 범위                                                |
+| `blockagesById`        | object | SWMM link 또는 node ID별 막힘 비율                       |
+| `exceptions`           | array  | `{ blockage, swmmLinks }` 형태의 예외 막힘 입력          |
 
 실행 중인 세션이 없으면 `409 Conflict`를 반환한다.
 
 ### 엔진 정지, 일시정지, 재개
 
-| 기능 | Method | Path | 주요 실패 |
-| --- | --- | --- | --- |
-| 정지 | `POST` | `/api/engine/stop` | - |
-| 일시정지 | `POST` | `/api/engine/pause` | `409 Conflict` |
-| 재개 | `POST` | `/api/engine/resume` | `409 Conflict` |
+| 기능     | Method | Path                 | 주요 실패      |
+| -------- | ------ | -------------------- | -------------- |
+| 정지     | `POST` | `/api/engine/stop`   | -              |
+| 일시정지 | `POST` | `/api/engine/pause`  | `409 Conflict` |
+| 재개     | `POST` | `/api/engine/resume` | `409 Conflict` |
 
 `pause`는 PySWMM 세션을 닫지 않고 tick loop만 멈춘다. `resume`은 같은 세션에서
 계산을 이어간다. `stop`은 세션을 닫고 다음 시작 시 처음부터 실행한다.
@@ -514,11 +692,11 @@ PySWMM 세션을 시작한다. 변환 오류가 있으면 `422`를 반환한다.
 
 ZIP에는 다음 파일이 포함된다.
 
-| 파일 | 설명 |
-| --- | --- |
-| `generated_from_editor.inp` | 생성된 SWMM INP |
-| `conversion-report.json` | 변환 리포트 |
-| `mapping.json` | React editor와 SWMM 객체 매핑 |
+| 파일                        | 설명                          |
+| --------------------------- | ----------------------------- |
+| `generated_from_editor.inp` | 생성된 SWMM INP               |
+| `conversion-report.json`    | 변환 리포트                   |
+| `mapping.json`              | React editor와 SWMM 객체 매핑 |
 
 ## 이전 API
 

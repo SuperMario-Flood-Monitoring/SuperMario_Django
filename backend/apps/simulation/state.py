@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
+from channels.db import database_sync_to_async
 from channels.layers import get_channel_layer
 
 from swmm_engine.interface import create_engine_session
@@ -10,6 +12,7 @@ from swmm_engine.llm_dispatcher import schedule_llm_analysis_dispatch
 
 
 GROUP_NAME = "simulation"
+logger = logging.getLogger(__name__)
 
 engine = create_engine_session()
 websocket_clients = 0
@@ -24,7 +27,28 @@ def status_payload() -> dict[str, Any]:
 
 
 async def broadcast(payload: dict[str, Any]) -> None:
-    schedule_llm_analysis_dispatch(payload)
+    from apps.monitoring.services.forecast_state import (
+        build_forecast_llm_payload,
+        forecast,
+        record_snapshot,
+    )
+    from apps.monitoring.services.hazard_service import create_hazard_events_from_swmm_tick
+
+    record_snapshot(payload)
+    forecast_result = forecast()
+
+    try:
+        await database_sync_to_async(
+            create_hazard_events_from_swmm_tick,
+            thread_sensitive=False,
+        )(payload)
+    except Exception as exc:  # pragma: no cover - hazard logging must not stop simulation
+        logger.warning("Hazard event creation failed: %s", exc)
+
+    forecast_payload = build_forecast_llm_payload(payload, forecast_result)
+    if forecast_payload is not None:
+        schedule_llm_analysis_dispatch(forecast_payload)
+
     channel_layer = get_channel_layer()
     await channel_layer.group_send(
         GROUP_NAME,

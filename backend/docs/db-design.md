@@ -74,10 +74,56 @@ erDiagram
         varchar employee_name
         varchar chat_id
     }
+
+    HAZARD_EVENT {
+        bigint id PK
+        varchar event_key UK
+        varchar run_id
+        integer step_index
+        varchar model_time
+        varchar source
+        varchar target_id
+        varchar hazard_level
+        varchar hazard_type
+        text hazard_detail
+        varchar status
+        json metrics_snapshot
+        boolean is_deleted
+        datetime resolved_at
+        datetime created_at
+        datetime updated_at
+    }
+
+    HAZARD_ACTION {
+        bigint id PK
+        bigint event_id FK
+        text action_detail
+        varchar action_type
+        varchar result_status
+        varchar fastapi_sync_status
+        varchar fastapi_vector_id
+        text fastapi_error_message
+        datetime fastapi_requested_at
+        datetime fastapi_completed_at
+        datetime created_at
+    }
+
+    HAZARD_CASE_EMBEDDING {
+        bigint id PK
+        bigint event_id FK
+        text embedding_text
+        varchar vector_id
+        json metadata
+        datetime created_at
+    }
+
+    HAZARD_EVENT ||--o{ HAZARD_ACTION : has
+    HAZARD_EVENT ||--o{ HAZARD_CASE_EMBEDDING : has
 ```
 
-현재 두 테이블 사이에 외래 키는 없다. SWMM 런타임 snapshot과 tick log는 DB가
-아니라 `swmm_engine/logs/runtime-tick-logs/*.jsonl` 파일에 기록된다.
+위험 로그 관련 테이블은 `HazardEvent`를 기준으로 조치 이력과 embedding 저장
+이력이 외래 키로 연결된다. SWMM 런타임 snapshot 원본과 tick log는 DB가 아니라
+`swmm_engine/logs/runtime-tick-logs/*.jsonl` 파일에 기록된다.
 
 ## Facility
 
@@ -126,6 +172,70 @@ React 편집모드에서 저장한 배수도 layout JSON을 보관한다.
 기본 조회 순서는 `updated_at` 내림차순, `id` 내림차순이다. 삭제 API는
 `is_active=false`로 변경하는 soft delete를 수행한다.
 
+## HazardEvent
+
+SWMM runtime snapshot의 `risk.events` 중 `severity=CRITICAL` 이벤트를 저장한다.
+현재 프로젝트의 실제 risk 이벤트 키인 `eventType`, `source`, `sourceId`,
+`severity`를 사용하며, 예시 prompt의 `type`, `targetId` 같은 필드명에 의존하지
+않는다.
+
+| 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
+| --- | --- | --- | --- | --- |
+| `id` | BigAutoField | 아니요 | 자동 증가 | PK |
+| `event_key` | CharField(255) | 아니요 | 없음 | Unique, 중복 생성 방지 키 |
+| `run_id` | CharField(100) | 아니요 | 빈 문자열 | SWMM runId |
+| `step_index` | PositiveIntegerField | 아니요 | `0` | 최초 저장 tick |
+| `model_time` | CharField(64) | 아니요 | 빈 문자열 | SWMM modelTime 문자열 |
+| `source` | CharField(20) | 아니요 | 빈 문자열 | `link`, `node` 등 |
+| `target_id` | CharField(150) | 아니요 | 없음 | `sourceId`, 대상 node/link ID |
+| `hazard_level` | CharField(20) | 아니요 | 없음 | 현재 저장 대상은 `CRITICAL` |
+| `hazard_type` | CharField(60) | 아니요 | 없음 | `eventType` 값 |
+| `hazard_detail` | TextField | 아니요 | 없음 | Grid/상세 표시용 설명 |
+| `status` | CharField(20) | 아니요 | `OPEN` | `OPEN`, `IN_PROGRESS`, `RESOLVED` |
+| `metrics_snapshot` | JSONField | 아니요 | `{}` | 대상 node/link의 당시 수치 |
+| `is_deleted` | BooleanField | 아니요 | `false` | 조치 완료 후 목록 숨김용 논리 삭제 |
+| `resolved_at` | DateTimeField | 예 | `NULL` | 조치 완료 시각 |
+| `created_at` | DateTimeField | 아니요 | 생성 시각 | 자동 기록 |
+| `updated_at` | DateTimeField | 아니요 | 수정 시각 | 자동 갱신 |
+
+`event_key`는 `run_id:hazard_type:target_id:hazard_level` 형식이다. 같은 실행에서
+같은 대상에 같은 위험이 반복 발생해도 하나의 위험 로그만 생성한다.
+
+## HazardAction
+
+관리자가 위험 로그에 대해 입력한 조치 이력이다.
+
+| 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
+| --- | --- | --- | --- | --- |
+| `id` | BigAutoField | 아니요 | 자동 증가 | PK |
+| `event` | ForeignKey | 아니요 | 없음 | `HazardEvent`, CASCADE |
+| `action_detail` | TextField | 아니요 | 없음 | 관리자 조치 내용 |
+| `action_type` | CharField(60) | 아니요 | 빈 문자열 | 조치 유형 |
+| `result_status` | CharField(60) | 아니요 | 빈 문자열 | 조치 결과 |
+| `fastapi_sync_status` | CharField(20) | 아니요 | `PENDING` | `PENDING`, `SENT`, `FAILED` |
+| `fastapi_vector_id` | CharField(120) | 아니요 | 빈 문자열 | FastAPI가 반환한 vector id |
+| `fastapi_error_message` | TextField | 아니요 | 빈 문자열 | FastAPI 요청 실패 사유 |
+| `fastapi_requested_at` | DateTimeField | 예 | `NULL` | FastAPI 요청 시각 |
+| `fastapi_completed_at` | DateTimeField | 예 | `NULL` | FastAPI 응답 또는 실패 확정 시각 |
+| `created_at` | DateTimeField | 아니요 | 생성 시각 | 자동 기록 |
+
+조치 내용은 저장 후 FastAPI maintenance log endpoint로 전달된다. FastAPI 연동이
+실패해도 `HazardAction` row는 유지하고 `fastapi_sync_status=FAILED`로 기록한다.
+
+## HazardCaseEmbedding
+
+VectorDB 저장 이력을 남기는 테이블이다. 현재 MVP에서는 실제 VectorDB 연결 대신
+`hazard-case-{uuid}` 형식의 임시 `vector_id`를 저장한다.
+
+| 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
+| --- | --- | --- | --- | --- |
+| `id` | BigAutoField | 아니요 | 자동 증가 | PK |
+| `event` | ForeignKey | 아니요 | 없음 | `HazardEvent`, CASCADE |
+| `embedding_text` | TextField | 아니요 | 없음 | 위험 상황과 조치 내용을 결합한 요약 텍스트 |
+| `vector_id` | CharField(120) | 아니요 | 없음 | VectorDB 문서 ID 또는 MVP 임시 ID |
+| `metadata` | JSONField | 아니요 | `{}` | event_id, target_id, 위험 유형 등 |
+| `created_at` | DateTimeField | 아니요 | 생성 시각 | 자동 기록 |
+
 ## 마이그레이션
 
 현재 마이그레이션 파일은 다음과 같다.
@@ -134,6 +244,7 @@ React 편집모드에서 저장한 배수도 layout JSON을 보관한다.
 | --- | --- |
 | `custom_auth` | `apps/auth/migrations/0001_initial.py` |
 | `facilities` | `apps/facilities/migrations/0001_initial.py` |
+| `monitoring` | `apps/monitoring/migrations/0001_initial.py` |
 | `notification` | `apps/notification/migrations/0001_initial.py` |
 | `scenarios` | `apps/scenarios/migrations/0001_initial.py` |
 
