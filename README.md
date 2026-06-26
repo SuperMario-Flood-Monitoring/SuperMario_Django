@@ -327,7 +327,7 @@ SuperMario_Django/
 | `SUPERMARIO_REFRESH_COOKIE_SAMESITE` | `Lax` | refresh cookie SameSite 정책 |
 | `SUPERMARIO_REFRESH_COOKIE_SECURE` | local `false`, prod `true` | refresh cookie Secure 설정 |
 | `SUPERMARIO_INITIAL_ADMIN_USERNAME` | `admin` | ADMIN이 없을 때 자동 생성할 초기 관리자 ID |
-| `SUPERMARIO_INITIAL_ADMIN_PASSWORD` | `tnvjakfldh4` | ADMIN이 없을 때 자동 생성할 초기 관리자 비밀번호 |
+| `SUPERMARIO_INITIAL_ADMIN_PASSWORD` | `supermario4` | ADMIN이 없을 때 자동 생성할 초기 관리자 비밀번호 |
 | `DATABASE_ENGINE` | `sqlite` | DB 엔진. `sqlite`, `postgres` 지원 |
 | `SQLITE_PATH` | `backend/db.sqlite3` | SQLite DB 파일 경로 |
 | `POSTGRES_DB` | `supermario` | PostgreSQL database 이름 |
