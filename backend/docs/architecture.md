@@ -85,7 +85,7 @@ flowchart LR
    성공 시 access/refresh token을 모두 rotation한다.
 
 초기 ADMIN 생성은 `ensure_admin_user --only-if-no-admin`로 수행한다. 기본
-`admin` row가 이미 있으면 삭제 후 기본 비밀번호 `tnvjakfldh4`로 다시 생성하고,
+`admin` row가 이미 있으면 기본 비밀번호 `supermario4`로 갱신하고,
 다른 ADMIN 사용자가 이미 있으면 건너뛴다.
 
 ### 시나리오 저장

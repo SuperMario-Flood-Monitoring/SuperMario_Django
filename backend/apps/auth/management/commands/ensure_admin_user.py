@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from apps.auth.models import User
 
 DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "tnvjakfldh4"
+DEFAULT_ADMIN_PASSWORD = "supermario4"
 
 
 class Command(BaseCommand):
@@ -37,14 +37,10 @@ class Command(BaseCommand):
         if not password:
             raise CommandError("--password가 필요합니다.")
 
-        existing_default_admin = User.objects.filter(username=username, role=User.Role.ADMIN)
-        should_recreate_default_admin = existing_default_admin.exists()
-        if should_recreate_default_admin:
-            existing_default_admin.delete()
-
+        target_user_exists = User.objects.filter(username=username).exists()
         if (
             options["only_if_no_admin"]
-            and not should_recreate_default_admin
+            and not target_user_exists
             and User.objects.filter(role=User.Role.ADMIN).exists()
         ):
             self.stdout.write(self.style.SUCCESS("ADMIN 사용자가 이미 있어 건너뜁니다."))

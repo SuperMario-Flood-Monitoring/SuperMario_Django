@@ -97,11 +97,11 @@ class EnsureAdminUserCommandTests(TestCase):
 
         user = User.objects.get(username="admin")
         self.assertEqual(user.role, User.Role.ADMIN)
-        self.assertTrue(check_password("tnvjakfldh4", user.password))
+        self.assertTrue(check_password("supermario4", user.password))
         self.assertIn("ADMIN 사용자 admin 생성 완료.", stdout.getvalue())
 
-    def test_recreates_existing_default_admin(self):
-        User.objects.create(
+    def test_updates_existing_default_admin(self):
+        existing = User.objects.create(
             username="admin",
             role=User.Role.ADMIN,
             password=make_password("old-password"),
@@ -111,11 +111,12 @@ class EnsureAdminUserCommandTests(TestCase):
         call_command("ensure_admin_user", "--only-if-no-admin", stdout=stdout)
 
         user = User.objects.get(username="admin")
-        self.assertTrue(check_password("tnvjakfldh4", user.password))
-        self.assertIn("ADMIN 사용자 admin 생성 완료.", stdout.getvalue())
+        self.assertTrue(check_password("supermario4", user.password))
+        self.assertEqual(user.user_id, existing.user_id)
+        self.assertIn("ADMIN 사용자 admin 갱신 완료.", stdout.getvalue())
 
-    def test_recreates_default_admin_even_when_other_admin_exists(self):
-        User.objects.create(
+    def test_updates_default_admin_even_when_other_admin_exists(self):
+        existing = User.objects.create(
             username="admin",
             role=User.Role.ADMIN,
             password=make_password("old-password"),
@@ -130,9 +131,10 @@ class EnsureAdminUserCommandTests(TestCase):
         call_command("ensure_admin_user", "--only-if-no-admin", stdout=stdout)
 
         user = User.objects.get(username="admin")
-        self.assertTrue(check_password("tnvjakfldh4", user.password))
+        self.assertEqual(user.user_id, existing.user_id)
+        self.assertTrue(check_password("supermario4", user.password))
         self.assertTrue(User.objects.filter(username="root").exists())
-        self.assertIn("ADMIN 사용자 admin 생성 완료.", stdout.getvalue())
+        self.assertIn("ADMIN 사용자 admin 갱신 완료.", stdout.getvalue())
 
     def test_skips_default_admin_when_admin_exists(self):
         existing = User.objects.create(

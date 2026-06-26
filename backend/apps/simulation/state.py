@@ -7,8 +7,6 @@ from typing import Any
 from channels.db import database_sync_to_async
 from channels.layers import get_channel_layer
 
-from apps.monitoring.services.forecast_state import build_forecast_llm_payload, forecast, record_snapshot
-from apps.monitoring.services.hazard_service import create_hazard_events_from_swmm_tick
 from swmm_engine.interface import create_engine_session
 from swmm_engine.llm_dispatcher import schedule_llm_analysis_dispatch
 
@@ -29,6 +27,13 @@ def status_payload() -> dict[str, Any]:
 
 
 async def broadcast(payload: dict[str, Any]) -> None:
+    from apps.monitoring.services.forecast_state import (
+        build_forecast_llm_payload,
+        forecast,
+        record_snapshot,
+    )
+    from apps.monitoring.services.hazard_service import create_hazard_events_from_swmm_tick
+
     record_snapshot(payload)
     forecast_result = forecast()
 
