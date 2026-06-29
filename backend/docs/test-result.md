@@ -21,9 +21,9 @@
 | Django system check                    | 통과      |
 | 직접 통합테스트                        | 통과      |
 | migration 변경 여부                    | `monitoring.0002` 추가 |
-| 활성 auth/facilities/monitoring/notification/simulation 테스트 | 52개 통과 |
-| 전체 테스트 발견 수                    | 52        |
-| 전체 테스트 성공                       | 52        |
+| 활성 auth/facilities/monitoring/notification/scenarios/simulation 테스트 | 56개 통과 |
+| 전체 테스트 발견 수                    | 56        |
+| 전체 테스트 성공                       | 56        |
 | 전체 테스트 실패                       | 0         |
 | 전체 테스트 오류                       | 0         |
 | 전체 테스트 최종 결과                  | 통과      |
@@ -35,7 +35,7 @@ notification app이 추가되기 전 기준으로 사용자가 직접 수행한 
 흐름을 기준으로 수행한 결과이며, notification app 추가 이후의 알림 수신자 API와
 LLM notification payload는 아래 자동 테스트 결과로 별도 검증했다.
 
-`apps.auth apps.facilities apps.monitoring apps.notification apps.simulation` 테스트는 52개 모두
+`apps.auth apps.facilities apps.monitoring apps.notification apps.scenarios apps.simulation` 테스트는 56개 모두
 통과했다.
 `apps.simulation`에는 LangChain payload의 `id`를 React 강수 preset 기준으로
 `맑음`, `약한비`, `폭우`로 정규화하는 LEVEL 13 회귀 테스트와 LLM 발송
@@ -96,7 +96,16 @@ LEVEL 26 기준으로 위험 조치 흐름을 조치 시작과 조치 완료로 
 embedding 이력을 생성한다. `result_detail` 없이 완료 요청을 보내면 400을
 반환하는 것도 검증했다.
 
-현재 `manage.py test -v 2`의 전체 discovery 대상 52개 테스트는 모두 통과한다.
+시나리오 CRUD는 생성, 목록 조회, 상세 조회, layout 변경 시 version 증가, soft
+delete, `includeInactive=true` 조회, 인증 토큰 누락 시 401, 빈 title 검증 실패를
+회귀 테스트로 추가했다.
+
+LEVEL 27 기준으로 SWMM 위험 이벤트와 forecast 위험 이벤트에 현장 조치
+우선순위 필드 `priorityScore`, `priorityBand`, `priorityReasons`를 추가했다.
+위험 로그 목록은 같은 상태 안에서 priority score 내림차순으로 정렬되며, LLM
+분석 context와 FastAPI maintenance payload에도 우선순위 정보가 포함된다.
+
+현재 `manage.py test -v 2`의 전체 discovery 대상 56개 테스트는 모두 통과한다.
 
 ## 통과한 테스트
 
@@ -128,6 +137,7 @@ embedding 이력을 생성한다. `result_detail` 없이 완료 요청을 보내
 | `apps.monitoring.tests.HazardApiTests.test_action_start_marks_event_in_progress_without_embedding_dispatch`      | 통과 |
 | `apps.monitoring.tests.HazardApiTests.test_detail_includes_metrics_snapshot`                                      | 통과 |
 | `apps.monitoring.tests.HazardApiTests.test_forecast_api_returns_runtime_buffer_prediction`                        | 통과 |
+| `apps.monitoring.tests.HazardApiTests.test_lists_hazard_rows_by_priority_score`                                   | 통과 |
 | `apps.monitoring.tests.HazardApiTests.test_lists_open_hazard_rows_without_metrics_snapshot`                       | 통과 |
 | `apps.monitoring.tests.HazardApiTests.test_rejects_hazard_api_without_admin_token`                                | 통과 |
 | `apps.monitoring.tests.HazardEventServiceTests.test_creates_critical_hazard_event_from_current_swmm_risk_event_shape` | 통과 |
@@ -142,6 +152,9 @@ embedding 이력을 생성한다. `result_detail` 없이 완료 요청을 보내
 | `apps.notification.tests.NotificationRecipientApiTests.test_deletes_notification_recipient`                        | 통과 |
 | `apps.notification.tests.NotificationRecipientApiTests.test_lists_notification_recipients`                         | 통과 |
 | `apps.notification.tests.NotificationRecipientApiTests.test_rejects_notification_api_without_admin_token`          | 통과 |
+| `apps.scenarios.tests.ScenarioApiTests.test_creates_lists_updates_details_and_soft_deletes_scenario`               | 통과 |
+| `apps.scenarios.tests.ScenarioApiTests.test_rejects_blank_title`                                                   | 통과 |
+| `apps.scenarios.tests.ScenarioApiTests.test_rejects_scenario_api_without_admin_token`                              | 통과 |
 | `apps.simulation.tests.LangChainDispatchPayloadTests.test_allows_dispatch_after_cooldown`                          | 통과 |
 | `apps.simulation.tests.LangChainDispatchPayloadTests.test_builds_langchain_request_payload_shape`                  | 통과 |
 | `apps.simulation.tests.LangChainDispatchPayloadTests.test_flushes_aggregation_batch_and_starts_cooldown`          | 통과 |
@@ -163,14 +176,14 @@ embedding 이력을 생성한다. `result_detail` 없이 완료 요청을 보내
 | 직접 통합테스트                            |         - | 통과 |
 | auth API 및 admin 생성 command             |        10 | 통과 |
 | facilities API                             |         3 | 통과 |
-| monitoring 위험 로그 API, 예측, 저장 서비스, FastAPI maintenance 연동 |        20 | 통과 |
+| monitoring 위험 로그 API, 예측, 저장 서비스, FastAPI maintenance 연동 |        21 | 통과 |
 | notification API 및 LLM notification payload |      7 | 통과 |
+| scenarios CRUD API                           |      3 | 통과 |
 | LLM dispatcher                             |        10 | 통과 |
 | risk lifecycle                             |         3 | 통과 |
 
 ## 남은 검증 범위
 
-- 시나리오 CRUD API 테스트
 - 에디터 변환 API 테스트
 - 현재 `/api/engine/start`, `/api/engine/control`, `/api/engine/pause`,
   `/api/engine/resume`, `/api/engine/stop` 테스트

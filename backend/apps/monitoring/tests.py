@@ -74,7 +74,39 @@ class HazardApiTests(TestCase):
         rows = response.json()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["target_id"], "PIPE_1")
+        self.assertEqual(rows[0]["priorityBand"], "P1")
+        self.assertGreater(rows[0]["priorityScore"], 170)
         self.assertNotIn("metrics_snapshot", rows[0])
+
+    def test_lists_hazard_rows_by_priority_score(self):
+        low_priority = HazardEvent.objects.create(
+            event_key="run-1:PREDICTED_FULL_PIPE:PIPE_1:CRITICAL",
+            run_id="run-1",
+            target_id="PIPE_1",
+            source="link",
+            hazard_level="CRITICAL",
+            hazard_type="PREDICTED_FULL_PIPE",
+            hazard_detail="만관 예측",
+            metrics_snapshot={"metric": "fullness", "currentValue": 0.2, "predictedValue": 0.95},
+        )
+        high_priority = HazardEvent.objects.create(
+            event_key="run-1:FLOODING_DETECTED:NODE_1:CRITICAL",
+            run_id="run-1",
+            target_id="NODE_1",
+            source="node",
+            hazard_level="CRITICAL",
+            hazard_type="FLOODING_DETECTED",
+            hazard_detail="월류 감지",
+            metrics_snapshot={"floodingCms": 0.01, "depthRatio": 1.1},
+        )
+
+        response = self.client.get("/api/hazards?status=OPEN", HTTP_AUTHORIZATION=self.auth_header)
+
+        self.assertEqual(response.status_code, 200)
+        rows = response.json()
+        self.assertEqual(rows[0]["id"], high_priority.id)
+        self.assertEqual(rows[1]["id"], low_priority.id)
+        self.assertGreater(rows[0]["priorityScore"], rows[1]["priorityScore"])
 
     def test_detail_includes_metrics_snapshot(self):
         event = HazardEvent.objects.create(
@@ -91,7 +123,9 @@ class HazardApiTests(TestCase):
         response = self.client.get(f"/api/hazards/{event.id}", HTTP_AUTHORIZATION=self.auth_header)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["metrics_snapshot"], {"flowCms": -0.25})
+        payload = response.json()
+        self.assertEqual(payload["metrics_snapshot"], {"flowCms": -0.25})
+        self.assertIn("역류", " ".join(payload["priorityReasons"]))
 
     def test_action_start_marks_event_in_progress_without_embedding_dispatch(self):
         event = HazardEvent.objects.create(
@@ -176,6 +210,7 @@ class HazardApiTests(TestCase):
         dispatched_payload = post_maintenance_log.call_args.args[0]
         self.assertEqual(dispatched_payload["event"]["target_id"], "PIPE_1")
         self.assertEqual(dispatched_payload["event"]["hazard_type"], "REVERSE_FLOW")
+        self.assertEqual(dispatched_payload["event"]["priority"]["priorityBand"], "P1")
         self.assertEqual(dispatched_payload["metrics"]["flowCms"], -0.25)
         self.assertEqual(dispatched_payload["action"]["initial_action_detail"], "하류 관로 현장 점검 진행")
         self.assertEqual(dispatched_payload["action"]["result_detail"], "토사 제거 후 수위 안정화")
@@ -327,6 +362,7 @@ class MaintenanceDispatcherTests(TestCase):
         self.assertEqual(payload["event"]["hazard_type"], "REVERSE_FLOW")
         self.assertEqual(payload["event"]["hazard_level"], "CRITICAL")
         self.assertEqual(payload["metrics"], {"flowCms": -0.25, "direction": "reverse"})
+        self.assertEqual(payload["event"]["priority"]["priorityBand"], "P1")
         self.assertEqual(payload["action"]["initial_action_detail"], "원문 조치 내용")
         self.assertEqual(payload["action"]["result_detail"], "현장 확인 완료")
         self.assertEqual(payload["action"]["recurrence_note"], "역류 시 하류 관로 우선 확인")
@@ -370,6 +406,7 @@ class ForecastStateTests(TestCase):
         event = result["events"][0]
         self.assertEqual(event["sourceId"], "PIPE_1")
         self.assertEqual(event["eventType"], "PREDICTED_FULL_PIPE")
+        self.assertIn("priorityScore", event)
         self.assertGreater(event["metrics"]["predictedValue"], 0.69)
 
     def test_builds_forecast_llm_payload_only_for_critical_predictions(self):
@@ -452,6 +489,7 @@ class ForecastStateTests(TestCase):
         self.assertIn("Need at least", result["message"])
         self.assertIsNotNone(payload)
         self.assertEqual(payload["llmTrigger"]["context"]["riskEvents"][0]["eventType"], "PREDICTED_BLOCKAGE_CLOSED")
+        self.assertIn("priorityScore", payload["llmTrigger"]["context"]["riskEvents"][0])
 
 
 def _forecast_snapshot(

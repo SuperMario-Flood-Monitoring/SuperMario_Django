@@ -209,6 +209,13 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
     "hazard_type": "REVERSE_FLOW",
     "hazard_detail": "파이프(pipe_free_1781771871446)에서 역류가 감지되었습니다.",
     "status": "OPEN",
+    "priorityScore": 177.0,
+    "priorityBand": "P1",
+    "priorityReasons": [
+      "CRITICAL 위험",
+      "역류 위험",
+      "역류 흐름 flowCms=-0.034"
+    ],
     "created_at": "2026-06-25T12:00:00"
   }
 ]
@@ -217,6 +224,7 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
 `source`가 `link`가 아니면 `pipe_id`는 `null`일 수 있다. 이 저장소는 React
 클라이언트를 포함하지 않으므로 현재는 클라이언트가 3초 polling 등으로 이 API를
 호출하는 방식만 제공한다.
+목록은 같은 상태 안에서 `priorityScore` 내림차순으로 정렬한다.
 
 ### 10분 위험 예측 조회
 
@@ -261,7 +269,10 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
         "rainfallLevel": "heavy",
         "forecastMinutes": 10
       },
-      "reason": "10분 뒤 fullness 위험이 예측되었습니다."
+      "reason": "10분 뒤 fullness 위험이 예측되었습니다.",
+      "priorityScore": 147.5,
+      "priorityBand": "P2",
+      "priorityReasons": ["CRITICAL 위험", "만관 위험"]
     }
   ],
   "predictions": []
@@ -295,6 +306,13 @@ SWMM snapshot 원본 전체는 반환하지 않는다.
   "hazard_type": "REVERSE_FLOW",
   "hazard_detail": "파이프(pipe_free_1781771871446)에서 역류가 감지되었습니다.",
   "status": "OPEN",
+  "priorityScore": 177.0,
+  "priorityBand": "P1",
+  "priorityReasons": [
+    "CRITICAL 위험",
+    "역류 위험",
+    "역류 흐름 flowCms=-0.034"
+  ],
   "run_id": "20260624-164620-7faf56be",
   "step_index": 3087,
   "model_time": "2026-06-16T00:51:27",
@@ -384,6 +402,15 @@ Django가 FastAPI로 보내는 body:
     "hazard_type": "REVERSE_FLOW",
     "hazard_level": "CRITICAL",
     "hazard_detail": "파이프(pipe_free_1781771871446)에서 역류가 감지되었습니다.",
+    "priority": {
+      "priorityScore": 177.0,
+      "priorityBand": "P1",
+      "priorityReasons": [
+        "CRITICAL 위험",
+        "역류 위험",
+        "역류 흐름 flowCms=-0.034"
+      ]
+    },
     "created_at": "2026-06-26T15:51:00"
   },
   "metrics": {

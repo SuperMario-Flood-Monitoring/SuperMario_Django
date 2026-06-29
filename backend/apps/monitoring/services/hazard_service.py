@@ -9,12 +9,14 @@ from django.utils import timezone
 from ..models import HazardAction, HazardCaseEmbedding, HazardEvent
 from .maintenance_dispatcher import dispatch_maintenance_log
 from .vector_service import build_embedding_text, save_hazard_case_to_vector_db
+from swmm_engine.risk.priority import calculate_priority
 
 
 CRITICAL_LEVEL = "CRITICAL"
 
 
 def serialize_hazard_row(event: HazardEvent) -> dict[str, Any]:
+    priority = hazard_event_priority(event)
     return {
         "id": event.id,
         "target_id": event.target_id,
@@ -24,6 +26,7 @@ def serialize_hazard_row(event: HazardEvent) -> dict[str, Any]:
         "hazard_type": event.hazard_type,
         "hazard_detail": event.hazard_detail,
         "status": event.status,
+        **priority,
         "created_at": event.created_at.isoformat(),
     }
 
@@ -62,7 +65,22 @@ def list_hazard_events(status: str = HazardEvent.Status.OPEN, include_deleted: b
         queryset = queryset.filter(status=status)
     if not include_deleted:
         queryset = queryset.filter(is_deleted=False)
-    return list(queryset)
+    return sorted(
+        list(queryset),
+        key=lambda event: (-float(hazard_event_priority(event)["priorityScore"]), event.created_at),
+    )
+
+
+def hazard_event_priority(event: HazardEvent) -> dict[str, Any]:
+    return calculate_priority(
+        {
+            "eventType": event.hazard_type,
+            "severity": event.hazard_level,
+            "source": event.source,
+            "sourceId": event.target_id,
+        },
+        event.metrics_snapshot,
+    )
 
 
 def create_hazard_events_from_swmm_tick(tick: Mapping[str, Any]) -> list[HazardEvent]:

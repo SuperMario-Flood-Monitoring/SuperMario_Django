@@ -65,7 +65,7 @@ flowchart LR
 | `apps/simulation`               | SWMM 엔진 API, 에디터 변환 API, WebSocket consumer, 전역 엔진 상태              |
 | `swmm_engine/converter`         | React editor layout JSON을 SWMM INP/report/mapping으로 변환                     |
 | `swmm_engine/engine`            | PySWMM 세션 생성, tick loop, pause/resume/stop/control 처리                     |
-| `swmm_engine/risk`              | snapshot 구조 검증, deterministic 위험 이벤트 판정, LLM context 생성            |
+| `swmm_engine/risk`              | snapshot 구조 검증, deterministic 위험 이벤트 판정, 우선순위 점수 계산, LLM context 생성 |
 | `swmm_engine/llm_dispatcher.py` | 위험 snapshot을 외부 LLM 서버로 전송하고 LangChain 상황 ID와 문자 발송 묶음/cooldown 정책을 관리 |
 | `legacy`                        | 예전 `/api/simulations/` 흐름과 테스트 보관                                     |
 | `backend/docs`                  | 현재 구현 기준 기술 문서                                                        |
@@ -127,6 +127,9 @@ flowchart LR
    `source`, `sourceId`, `severity`를 사용해 `HazardEvent`를 생성한다.
    `event_key=runId:hazard_type:target_id:hazard_level`로 같은 실행의 중복 위험
    로그 생성을 방지한다.
+   위험 이벤트에는 `priorityScore`, `priorityBand`, `priorityReasons`를 계산해
+   붙인다. 우선순위는 침수/월류, 역류, 100% 막힘, node 위험, 수치 초과량,
+   forecast 상승 기울기를 기준으로 산정한다.
 11. `apps.monitoring.services.forecast_state`는 broadcast snapshot에서 예측에
    필요한 최소 metric만 runtime 메모리 buffer에 저장한다. 수위 변화량 metric과
    함께 React 제어에서 들어온 `links.blockageRatio`도 저장한다.
@@ -197,7 +200,10 @@ flowchart LR
    만든다.
 7. 예측 결과의 `WARNING/CRITICAL` 이벤트는 React가 표시할 수 있고,
    `CRITICAL` 예측은 LLM dispatch의 입력 기준으로 사용된다.
-8. 이 1차 구현은 단일 프로세스 runtime state 기반이다. 서버 재시작 또는 다중
+8. forecast `riskEvents`도 우선순위 점수를 포함한다. 따라서 LLM 서버는
+   `swmm_raw_data`의 `riskEvents[].priorityScore`, `priorityBand`,
+   `priorityReasons`로 여러 위험 중 먼저 조치할 대상을 판단할 수 있다.
+9. 이 1차 구현은 단일 프로세스 runtime state 기반이다. 서버 재시작 또는 다중
    프로세스 배포에서는 예측 buffer가 공유되지 않는다.
 
 ## SWMM 교체 지점
