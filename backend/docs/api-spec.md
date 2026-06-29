@@ -2,7 +2,7 @@
 
 ## 문서 정보
 
-- 기준일: 2026-06-23
+- 기준일: 2026-06-29
 - 기준 구현: `config/urls.py`, `apps/*/urls.py`, `apps/*/apis/*.py`, `apps/facilities/views.py`, `apps/monitoring/views.py`
 - Base URL: `http://127.0.0.1:8000`
 - Content-Type: `application/json`

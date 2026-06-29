@@ -2,7 +2,7 @@
 
 ## 문서 정보
 
-- 기준일: 2026-06-23
+- 기준일: 2026-06-29
 - 기준 구현: `swmm_engine/converter`, `swmm_engine/engine`, `swmm_engine/risk`
 - 출력 형식: JSON
 - 엔진: PySWMM 2.1.0 / EPA SWMM 5.2.4
@@ -328,7 +328,7 @@ context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역
 조회한다. `bot_token` row가 없으면 `TELEGRAM_BOT_TOKEN`은 `null`, 대상자가
 없으면 `TELEGRAM_CHAT_ID`는 빈 배열이다.
 
-LLM 발송은 `backend/docs/notification-dispatch-policy.md`의 문자 발송 정책을
+LLM 발송은 `backend/docs/policy.md`의 문자 발송 정책을
 따른다. 일반 CRITICAL 위험은 `SUPERMARIO_LLM_AGGREGATION_SECONDS` 동안 묶은 뒤
 1회 발송하고, 발송 요청 시점부터 `SUPERMARIO_LLM_DISPATCH_COOLDOWN_SECONDS`
 동안 새 일반 위험을 pending queue에 누적한다. cooldown 이후 pending queue에

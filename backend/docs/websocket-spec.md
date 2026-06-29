@@ -2,7 +2,7 @@
 
 ## 문서 정보
 
-- 기준일: 2026-06-23
+- 기준일: 2026-06-29
 - 기준 구현: `apps/simulation/routing.py`, `apps/simulation/consumers.py`, `apps/simulation/state.py`
 
 ## 연결 정보
@@ -204,7 +204,7 @@ LangChain 계약의 `맑음/약한비/폭우`로 정규화한 값이다.
 cooldown window 동안 새 일반 위험을 pending queue에 누적한다. runtime
 `BLOCKAGE_CLOSED`, `REVERSE_FLOW`는 일반 cooldown 예외이며 emergency aggregation
 window로 별도 묶음 발송한다. 상세 정책은
-`backend/docs/notification-dispatch-policy.md`에 기록한다.
+`backend/docs/policy.md`에 기록한다.
 
 ## 연결 종료
 

@@ -2,7 +2,7 @@
 
 ## 실행 정보
 
-- 실행일: 2026-06-26
+- 실행일: 2026-06-29
 - 운영체제: Windows
 - Python: 3.14.4
 - 가상환경: `backend/.venv`
@@ -80,7 +80,7 @@ LEVEL 23 기준으로 LLM 문자 발송 정책을 aggregation window, cooldown w
 pending queue, emergency aggregation window 구조로 변경했다. 일반 CRITICAL 위험
 묶음 발송, cooldown 중 pending queue 누적, runtime `BLOCKAGE_CLOSED` emergency
 묶음 발송, runtime `REVERSE_FLOW` 유지시간 대기 없는 trigger를 회귀 테스트로
-검증했다. 문자 발송 정책은 `backend/docs/notification-dispatch-policy.md`에
+검증했다. 문자 발송 정책은 `backend/docs/policy.md`에
 별도 문서로 기록했다.
 
 LEVEL 25 기준으로 FastAPI/LangChain maintenance log payload를 기존 단일

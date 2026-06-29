@@ -2,7 +2,7 @@
 
 ## 문서 정보
 
-- 기준일: 2026-06-23
+- 기준일: 2026-06-29
 - 기준 구현: `config`, `apps`, `swmm_engine`
 
 ## 범위
@@ -15,6 +15,19 @@ WebSocket으로 전달된다.
 React 클라이언트와 FastAPI LangChain 서버는 외부 시스템이며 이 저장소에서
 구현하지 않는다. LangChain 호출은 `swmm_engine/llm_dispatcher.py`에서
 위험 trigger 발생 시 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다.
+
+## 관련 문서
+
+| 문서 | 내용 |
+| --- | --- |
+| `api-spec.md` | HTTP API 계약 |
+| `websocket-spec.md` | WebSocket 연결과 snapshot 구조 |
+| `policy.md` | 인증, 위험, forecast, 우선순위, 문자 발송, 조치 정책 |
+| `features.md` | 기능별 구현 현황 |
+| `technology.md` | 기술 스택과 외부 연동 |
+| `data-model.md` | Django DB 모델과 VectorDB 논리 모델 |
+| `db-design.md` | DB 테이블 상세 |
+| `swmm-spec.md` | SWMM 입출력과 risk snapshot 구조 |
 
 ## 구성도
 
