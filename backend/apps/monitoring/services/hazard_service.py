@@ -17,6 +17,7 @@ CRITICAL_LEVEL = "CRITICAL"
 
 def serialize_hazard_row(event: HazardEvent) -> dict[str, Any]:
     priority = hazard_event_priority(event)
+    current_action = latest_action_for_row(event)
     return {
         "id": event.id,
         "target_id": event.target_id,
@@ -25,6 +26,7 @@ def serialize_hazard_row(event: HazardEvent) -> dict[str, Any]:
         "hazard_level": event.hazard_level,
         "hazard_type": event.hazard_type,
         "hazard_detail": event.hazard_detail,
+        "action_detail": current_action.action_detail if current_action is not None else "",
         "status": event.status,
         **priority,
         "created_at": event.created_at.isoformat(),
@@ -60,15 +62,22 @@ def serialize_hazard_detail(event: HazardEvent) -> dict[str, Any]:
 
 
 def list_hazard_events(status: str = HazardEvent.Status.OPEN, include_deleted: bool = False) -> list[HazardEvent]:
-    queryset = HazardEvent.objects.all()
-    if status:
-        queryset = queryset.filter(status=status)
+    queryset = HazardEvent.objects.prefetch_related("actions").all()
+    normalized_status = str(status or "").upper()
+    if normalized_status and normalized_status != "ALL":
+        queryset = queryset.filter(status=normalized_status)
     if not include_deleted:
         queryset = queryset.filter(is_deleted=False)
     return sorted(
         list(queryset),
         key=lambda event: (-float(hazard_event_priority(event)["priorityScore"]), event.created_at),
     )
+
+
+def latest_action_for_row(event: HazardEvent) -> HazardAction | None:
+    if event.status != HazardEvent.Status.IN_PROGRESS:
+        return None
+    return event.actions.all().last()
 
 
 def hazard_event_priority(event: HazardEvent) -> dict[str, Any]:

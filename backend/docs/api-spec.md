@@ -3,7 +3,7 @@
 ## 문서 정보
 
 - 기준일: 2026-06-29
-- 기준 구현: `config/urls.py`, `apps/*/urls.py`, `apps/*/apis/*.py`, `apps/facilities/views.py`, `apps/monitoring/views.py`
+- 기준 구현: `config/urls.py`, `apps/*/urls.py`, `apps/*/apis/*.py`, `apps/facilities/views.py`, `apps/monitoring/apis/hazard_api.py`
 - Base URL: `http://127.0.0.1:8000`
 - Content-Type: `application/json`
 - 인증: `/api/auth/login`, `/api/auth/refresh`, `/api/engine/health`를 제외한
@@ -17,7 +17,7 @@
 | 에디터 변환 | `/api/editor/`       | `apps/simulation/apis/editor_api.py`         |
 | 시나리오    | `/api/scenarios`     | `apps/scenarios/apis/scenario_api.py`        |
 | 시설        | `/api/facilities/`   | `apps/facilities/views.py`                   |
-| 위험 로그   | `/api/hazards`       | `apps/monitoring/views.py`                   |
+| 위험 로그   | `/api/hazards`       | `apps/monitoring/apis/hazard_api.py`         |
 | 알림 수신자 | `/api/notification/` | `apps/notification/apis/notification_api.py` |
 | 인증        | `/api/auth/`         | `apps/auth/apis.py`                          |
 | 관리자      | `/admin/`            | Django admin                                 |
@@ -193,7 +193,7 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
 
 - Method: `GET`
 - Path: `/api/hazards`
-- Query: `status=OPEN`, `includeDeleted=false`
+- Query: `status=ALL`, `includeDeleted=true`
 - 성공: `200 OK`
 
 응답은 배열이다.
@@ -208,6 +208,7 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
     "hazard_level": "CRITICAL",
     "hazard_type": "REVERSE_FLOW",
     "hazard_detail": "파이프(pipe_free_1781771871446)에서 역류가 감지되었습니다.",
+    "action_detail": "",
     "status": "OPEN",
     "priorityScore": 177.0,
     "priorityBand": "P1",
@@ -224,7 +225,15 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
 `source`가 `link`가 아니면 `pipe_id`는 `null`일 수 있다. 이 저장소는 React
 클라이언트를 포함하지 않으므로 현재는 클라이언트가 3초 polling 등으로 이 API를
 호출하는 방식만 제공한다.
-목록은 같은 상태 안에서 `priorityScore` 내림차순으로 정렬한다.
+`status`를 생략하면 기본값은 `ALL`이다. `ALL`은 상태 필터를 걸지 않아
+`OPEN`, `IN_PROGRESS`, `RESOLVED`를 모두 반환한다. `includeDeleted` 기본값은
+`true`이므로 조치 완료로 `is_deleted=true`가 된 `RESOLVED` 로그도 목록에 포함된다.
+기존처럼 처리 전 로그만 보려면 `status=OPEN&includeDeleted=false`를 명시한다.
+목록은 `priorityScore` 내림차순으로 정렬한다.
+목록 DTO는 Grid 표시용 요약 정보만 반환한다. `IN_PROGRESS` 행의 `action_detail`에는
+현재 조치 중인 최신 `HazardAction.action_detail`이 들어간다. `OPEN`, `RESOLVED` 행의
+`action_detail`은 빈 문자열이다. `result_detail`, `recurrence_note`를 포함한 전체 조치
+이력은 `GET /api/hazards/{hazard_id}` 상세 응답의 `actions` 배열에서 확인한다.
 
 ### 10분 위험 예측 조회
 
