@@ -80,7 +80,7 @@ class EditorLayoutConversionTests(SimpleTestCase):
         self.assertLess(node.max_depth, 1000.0)
         self.assertEqual(node.ponded_area, 8.0)
 
-    def test_blocked_link_includes_upstream_node_depth_in_editor_state(self):
+    def test_blocked_link_does_not_mix_upstream_node_depth_into_pipe_state(self):
         session = RealtimeSwmmSession.__new__(RealtimeSwmmSession)
         session.swmm_links = {
             "PIPE_1": {
@@ -130,12 +130,13 @@ class EditorLayoutConversionTests(SimpleTestCase):
             },
         )
 
-        self.assertEqual(editor_states["pipe-editor"]["maxDepthRatio"], 1.25)
+        self.assertEqual(editor_states["pipe-editor"]["maxDepthRatio"], 0.0)
         self.assertEqual(editor_states["pipe-editor"]["maxFullness"], 0.0)
-        self.assertEqual(editor_states["pipe-editor"]["maxFloodingCms"], 0.03)
-        self.assertEqual(editor_states["link-editor"]["maxDepthRatio"], 1.25)
+        self.assertEqual(editor_states["pipe-editor"]["maxFloodingCms"], 0.0)
+        self.assertEqual(editor_states["pipe-editor"]["totalInflowCms"], 0.0)
+        self.assertEqual(editor_states["link-editor"]["maxDepthRatio"], 0.0)
         self.assertEqual(editor_states["link-editor"]["maxFullness"], 0.0)
-        self.assertEqual(editor_states["link-editor"]["totalInflowCms"], 0.5)
+        self.assertEqual(editor_states["link-editor"]["totalInflowCms"], 0.0)
 
     def test_full_link_blockage_closes_upstream_node_outflows_only(self):
         session = RealtimeSwmmSession.__new__(RealtimeSwmmSession)

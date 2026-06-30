@@ -413,7 +413,12 @@ class RealtimeSwmmSession:
         return connected
 
     def upstream_nodes_for_links(self, link_ids: set[str]) -> set[str]:
-        """막힌 link로 유입되는 상류 SWMM node를 editor 상태 집계에 포함한다."""
+        """막힌 link의 상류 SWMM node를 찾는다.
+
+        이 값은 위험 판단용 보조 정보로만 사용하고, pipe/editor link 상태에는
+        섞지 않는다. 막힌 관을 선택했을 때 노드 수위/외부 유입이 관 자체의
+        상태처럼 계속 증가해 보이면 런타임 의미가 흐려진다.
+        """
 
         upstream_nodes: set[str] = set()
         for link_id in link_ids:
@@ -734,7 +739,6 @@ class RealtimeSwmmSession:
             if is_manhole_editor_node or is_storage_facility_editor_node:
                 for node_id in linked_node_ids_set:
                     linked_link_ids.update(self.node_connected_links.get(node_id, set()))
-            linked_node_ids_set.update(self.upstream_nodes_for_links(linked_link_ids))
             linked_node_ids = sorted(node_id for node_id in linked_node_ids_set if node_id in node_states)
             linked_node_states = [node_states[node_id] for node_id in linked_node_ids]
             linked_link_states = [link_states[link_id] for link_id in linked_link_ids if link_id in link_states]
@@ -757,8 +761,7 @@ class RealtimeSwmmSession:
             }
         for editor_id, refs in (self.mapping.get("editorLinks") or {}).items():
             linked_link_ids = set(link_id for link_id in refs.get("swmmLinks", []) if link_id in link_states)
-            linked_node_ids = sorted(node_id for node_id in self.upstream_nodes_for_links(linked_link_ids) if node_id in node_states)
-            linked_node_states = [node_states[node_id] for node_id in linked_node_ids]
+            linked_node_states: list[dict[str, Any]] = []
             linked_link_states = [link_states[link_id] for link_id in linked_link_ids if link_id in link_states]
             fill_link_states = [
                 state
