@@ -186,7 +186,7 @@ flowchart LR
    기반 metric은 `NORMAL` forecast를 반환하고 LLM dispatch payload를 만들지
    않는다. `links.blockageRatio`는 제어 상태 자체가 위험 신호이므로 이 안정화
    조건의 예외다.
-5. 맑음/약한비/폭우의 `rainfallRatio`에 따라 최소 현재 수위 기준을 다르게
+5. 맑음/우천/호우/폭우의 `rainfallRatio`에 따라 최소 현재 수위 기준을 다르게
    적용한다. 예측값이 `CRITICAL` 기준 이상이어도 현재값이 너무 낮으면
    위험 이벤트로 만들지 않는다.
 6. `links.blockageRatio >= 1.0`은 `PREDICTED_BLOCKAGE_CLOSED` CRITICAL,

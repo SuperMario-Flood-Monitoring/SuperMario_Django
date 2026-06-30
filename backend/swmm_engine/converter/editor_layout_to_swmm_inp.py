@@ -20,6 +20,7 @@ import math
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
@@ -44,6 +45,8 @@ MAX_BLOCKED_MANNING_N = 0.15
 MAP_PADDING_M = 50.0
 INTERNAL_RELATION_MIN_LENGTH_M = 5.0
 INTERNAL_RELATION_MIN_DIAMETER_M = 1.20
+DEFAULT_SIMULATION_START = datetime(2026, 6, 16, 0, 0, 0)
+DEFAULT_SIMULATION_DURATION_SECONDS = 60 * 60
 
 PIPE_DIAMETER_M = {
     "small": 0.30,
@@ -1052,7 +1055,21 @@ def format_node_line(node: SwmmNode) -> str:
     return f"{node.id:<40} {node.elevation:>7.2f} FREE                        NO"
 
 
-def render_inp(result: ConvertResult, *, title: str) -> str:
+def simulation_window(duration_seconds: int | float | None = None) -> tuple[datetime, datetime]:
+    safe_duration_seconds = max(
+        1,
+        int(duration_seconds if duration_seconds is not None else DEFAULT_SIMULATION_DURATION_SECONDS),
+    )
+    start = DEFAULT_SIMULATION_START
+    return start, start + timedelta(seconds=safe_duration_seconds)
+
+
+def render_inp(
+    result: ConvertResult,
+    *,
+    title: str,
+    duration_seconds: int | float | None = None,
+) -> str:
     nodes = result.nodes
     links = result.links
     junctions = [node for node in nodes.values() if node.section == "JUNCTIONS"]
@@ -1061,6 +1078,7 @@ def render_inp(result: ConvertResult, *, title: str) -> str:
     conduits = [link for link in links if link.kind == "CONDUIT"]
     pumps = [link for link in links if link.kind == "PUMP"]
     weirs = [link for link in links if link.kind == "WEIR"]
+    start_at, end_at = simulation_window(duration_seconds)
     lines: list[str] = []
     add = lines.append
 
@@ -1075,12 +1093,12 @@ def render_inp(result: ConvertResult, *, title: str) -> str:
     add("LINK_OFFSETS         DEPTH")
     add("MIN_SLOPE            0.0001")
     add("ALLOW_PONDING        YES")
-    add("START_DATE           06/16/2026")
-    add("START_TIME           00:00:00")
-    add("REPORT_START_DATE    06/16/2026")
-    add("REPORT_START_TIME    00:00:00")
-    add("END_DATE             06/16/2026")
-    add("END_TIME             01:00:00")
+    add(f"START_DATE           {start_at:%m/%d/%Y}")
+    add(f"START_TIME           {start_at:%H:%M:%S}")
+    add(f"REPORT_START_DATE    {start_at:%m/%d/%Y}")
+    add(f"REPORT_START_TIME    {start_at:%H:%M:%S}")
+    add(f"END_DATE             {end_at:%m/%d/%Y}")
+    add(f"END_TIME             {end_at:%H:%M:%S}")
     add("WET_STEP             00:00:01")
     add("DRY_STEP             00:01:00")
     add("REPORT_STEP          00:00:01")
@@ -1184,15 +1202,6 @@ def render_inp(result: ConvertResult, *, title: str) -> str:
         add("DEFAULT_PUMP_CURVE                             2.00     1.50")
         add("")
 
-    closed_links = [link for link in conduits if link.initial_setting <= 0.0]
-    if closed_links:
-        add("[CONTROLS]")
-        for link in closed_links:
-            add(f"RULE CLOSE_{link.id}")
-            add("IF SIMULATION TIME > 0")
-            add(f"THEN CONDUIT {link.id} SETTING = 0.0")
-            add("")
-
     add("[REPORT]")
     add("INPUT      YES")
     add("CONTROLS   YES")
@@ -1289,7 +1298,7 @@ def render_conversion_report(result: ConvertResult, *, inp_text: str | None = No
             "rainfallTargetWeights": rainfall_target_weights,
             "dryWeatherTargets": dry_weather_targets,
             "rainfallCmsFormula": "rainfall_mm_per_hour / 1000 / 3600 * 500 * 0.8 * rainfallTargetWeight",
-            "blockageRule": "0-99% increases Manning n up to 0.15; 100% sets conduit setting to 0.0",
+            "blockageRule": "Editor blockage increases Manning n in the generated model; runtime controls apply link open ratio or flow limit.",
             "blockageTargets": [
                 {
                     "swmmLinkId": link.id,

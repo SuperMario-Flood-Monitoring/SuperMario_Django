@@ -28,19 +28,23 @@ LLM_DISPATCH_COOLDOWN_SECONDS = settings.SUPERMARIO_LLM_DISPATCH_COOLDOWN_SECOND
 LLM_DISPATCH_AGGREGATION_SECONDS = settings.SUPERMARIO_LLM_AGGREGATION_SECONDS
 LLM_DISPATCH_EMERGENCY_AGGREGATION_SECONDS = settings.SUPERMARIO_LLM_EMERGENCY_AGGREGATION_SECONDS
 LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS = 30
-DEFAULT_LANGCHAIN_SITUATION_ID = "약한비"
+DEFAULT_LANGCHAIN_SITUATION_ID = "우천"
 CRITICAL_SEVERITY = "CRITICAL"
 EMERGENCY_RUNTIME_EVENT_TYPES = {"BLOCKAGE_CLOSED", "REVERSE_FLOW"}
 LANGCHAIN_SITUATION_LABEL_BY_VALUE = {
     "0": "맑음",
     "0.0": "맑음",
-    "100": "약한비",
-    "100.0": "약한비",
+    "10": "우천",
+    "10.0": "우천",
+    "100": "호우",
+    "100.0": "호우",
     "300": "폭우",
     "300.0": "폭우",
     "맑음": "맑음",
-    "비옴": "약한비",
-    "약한비": "약한비",
+    "비옴": "우천",
+    "약한비": "우천",
+    "우천": "우천",
+    "호우": "호우",
     "폭우": "폭우",
 }
 LANGCHAIN_SITUATION_EXPLICIT_KEYS = (
@@ -53,9 +57,9 @@ LANGCHAIN_SITUATION_EXPLICIT_KEYS = (
     "reason",
 )
 LANGCHAIN_SITUATION_RAINFALL_KEYS = (
+    "rainfallPercent",
     "rainfall",
     "rainfallRatio",
-    "rainfallPercent",
 )
 LLM_CONTEXT_OMIT_KEYS = {
     "bytes",
@@ -642,7 +646,7 @@ def extract_situation_id(
     trigger: Mapping[str, Any],
     context: Mapping[str, Any],
 ) -> str:
-    """React 강수 preset과 context 값을 LangChain 상황 ID 세 값으로 정규화한다."""
+    """React 강수 preset과 context 값을 LangChain 상황 ID 네 단계로 정규화한다."""
 
     control_candidates = [
         snapshot.get("control"),
@@ -685,7 +689,7 @@ def extract_control_situation_id(control: Any) -> str | None:
 
 
 def normalize_langchain_situation_id(value: Any) -> str | None:
-    """값을 `맑음`, `약한비`, `폭우` 중 하나로 변환한다."""
+    """값을 `맑음`, `우천`, `호우`, `폭우` 중 하나로 변환한다."""
 
     if value is None:
         return None
@@ -703,30 +707,63 @@ def normalize_langchain_situation_id(value: Any) -> str | None:
         return None
 
     normalized = str(int(number)) if number.is_integer() else str(number)
-    return LANGCHAIN_SITUATION_LABEL_BY_VALUE.get(normalized)
+    return LANGCHAIN_SITUATION_LABEL_BY_VALUE.get(normalized) or rainfall_percent_to_situation_label(number)
+
+
+def rainfall_percent_to_situation_label(percent: float) -> str | None:
+    """React 강수 percent 값을 LLM 상황 ID로 변환한다."""
+
+    if percent < 0:
+        return None
+    if percent < 10:
+        return "맑음"
+    if percent < 100:
+        return "우천"
+    if percent == 100:
+        return "호우"
+    return "폭우"
+
+
+def rainfall_ratio_to_percent(ratio: float) -> float:
+    """runtime ratio와 React raw percent가 섞인 rainfallRatio 값을 percent로 변환한다."""
+
+    if ratio <= 3.0:
+        return ratio * 100.0
+    return ratio
 
 
 def normalize_rainfall_preset_id(value: Any, key: str) -> str | None:
     """강수 제어값을 React preset 기준 상황 ID로 변환한다."""
 
-    label = normalize_langchain_situation_id(value)
-    if label:
-        return label
+    if isinstance(value, str):
+        label = normalize_langchain_situation_id(value)
+        if label:
+            return label
+
+    if key not in {"rainfall", "rainfallRatio", "rainfallPercent"}:
+        label = normalize_langchain_situation_id(value)
+        if label:
+            return label
+
+    if key == "rainfallPercent":
+        label = normalize_langchain_situation_id(value)
+        if label:
+            return label
+
+    if key == "rainfall":
+        label = normalize_langchain_situation_id(value)
+        if label:
+            return label
+
+    if key != "rainfallRatio":
+        return None
 
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
 
-    if key == "rainfallRatio":
-        ratio_label_by_value = {
-            0.0: "맑음",
-            1.0: "약한비",
-            3.0: "폭우",
-        }
-        return ratio_label_by_value.get(number)
-
-    return None
+    return rainfall_percent_to_situation_label(rainfall_ratio_to_percent(number))
 
 
 async def post_langchain_analysis(payload: Mapping[str, Any]) -> dict[str, Any]:

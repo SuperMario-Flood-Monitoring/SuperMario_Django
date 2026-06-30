@@ -5,6 +5,7 @@ from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase
 
 from swmm_engine import llm_dispatcher
+from swmm_engine.converter.editor_layout_to_swmm_inp import convert_layout, render_inp
 from swmm_engine.engine import runtime_engine
 from swmm_engine.engine.runtime_engine import RealtimeSwmmSession
 from swmm_engine.llm_dispatcher import (
@@ -14,6 +15,40 @@ from swmm_engine.llm_dispatcher import (
 )
 
 
+class EditorLayoutConversionTests(SimpleTestCase):
+    def test_fully_blocked_conduit_does_not_emit_invalid_control_rule(self):
+        layout = {
+            "version": 1,
+            "groundSurfaceY": 0,
+            "nodes": [
+                {
+                    "id": "pipe-1",
+                    "swmmId": "pipe_1",
+                    "name": "막힘 관",
+                    "type": "pipeSegment",
+                    "x": 0,
+                    "y": 100,
+                    "width": 200,
+                    "height": 40,
+                    "props": {
+                        "blockage": 100,
+                        "pipeKind": "storm",
+                        "size": "medium",
+                    },
+                },
+            ],
+            "links": [],
+        }
+
+        result = convert_layout(layout)
+        inp_text = render_inp(result, title="test")
+
+        self.assertEqual(result.links[0].initial_setting, 0.0)
+        self.assertIn("[CONDUITS]", inp_text)
+        self.assertNotIn("[CONTROLS]", inp_text)
+        self.assertNotIn("THEN CONDUIT", inp_text)
+
+
 class LangChainDispatchPayloadTests(SimpleTestCase):
     def setUp(self):
         llm_dispatcher.reset_dispatch_policy_state()
@@ -21,10 +56,18 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
     def test_normalizes_react_rainfall_preset_values(self):
         cases = [
             (0, "맑음"),
-            (100, "약한비"),
+            (5, "맑음"),
+            (10, "우천"),
+            (50, "우천"),
+            (100, "호우"),
+            (101, "폭우"),
             (300, "폭우"),
             ("0", "맑음"),
-            ("100", "약한비"),
+            ("5", "맑음"),
+            ("10", "우천"),
+            ("50", "우천"),
+            ("100", "호우"),
+            ("101", "폭우"),
             ("300", "폭우"),
         ]
 
@@ -37,8 +80,10 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
     def test_normalizes_react_rainfall_preset_labels(self):
         cases = [
             ("맑음", "맑음"),
-            ("비옴", "약한비"),
-            ("약한비", "약한비"),
+            ("비옴", "우천"),
+            ("약한비", "우천"),
+            ("우천", "우천"),
+            ("호우", "호우"),
             ("폭우", "폭우"),
         ]
 
@@ -47,9 +92,22 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
                 self.assertEqual(normalize_langchain_situation_id(raw_value), expected)
 
     def test_uses_runtime_rainfall_ratio_when_explicit_id_is_missing(self):
-        context = {"simulation": {"control": {"rainfallRatio": 3.0}}}
+        cases = [
+            (0.05, "맑음"),
+            (0.1, "우천"),
+            (1.0, "호우"),
+            (3.0, "폭우"),
+            (10, "우천"),
+            (50, "우천"),
+            (100, "호우"),
+            (300, "폭우"),
+        ]
 
-        self.assertEqual(extract_situation_id({}, {}, context), "폭우")
+        for rainfall_ratio, expected in cases:
+            with self.subTest(rainfall_ratio=rainfall_ratio):
+                context = {"simulation": {"control": {"rainfallRatio": rainfall_ratio}}}
+
+                self.assertEqual(extract_situation_id({}, {}, context), expected)
 
     def test_builds_langchain_request_payload_shape(self):
         context = {
@@ -64,7 +122,7 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
         ):
             payload = build_langchain_request_payload({}, {}, context)
 
-        self.assertEqual(payload["id"], "약한비")
+        self.assertEqual(payload["id"], "호우")
         self.assertEqual(json.loads(payload["swmm_raw_data"]), context)
         self.assertEqual(payload["TELEGRAM_BOT_TOKEN"], "token")
         self.assertEqual(payload["TELEGRAM_CHAT_ID"], ["chat-1"])
@@ -152,7 +210,7 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
             patch.object(
                 llm_dispatcher,
                 "build_langchain_request_payload_async",
-                new=AsyncMock(return_value={"id": "약한비", "swmm_raw_data": "{}", "TELEGRAM_BOT_TOKEN": None, "TELEGRAM_CHAT_ID": []}),
+                new=AsyncMock(return_value={"id": "우천", "swmm_raw_data": "{}", "TELEGRAM_BOT_TOKEN": None, "TELEGRAM_CHAT_ID": []}),
             ),
             patch.object(llm_dispatcher, "post_langchain_analysis", side_effect=TimeoutError("timed out")),
             patch.object(llm_dispatcher, "append_llm_dispatch_result_log") as append_result_log,

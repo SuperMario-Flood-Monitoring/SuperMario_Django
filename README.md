@@ -344,6 +344,7 @@ SuperMario_Django/
 | `SUPERMARIO_FORECAST_MINUTES` | `10` | runtime state 기반 미래 위험 예측 horizon 분 |
 | `SUPERMARIO_FORECAST_WINDOW_SECONDS` | `120` | 예측 증가율 계산에 사용할 최근 관측 구간 초 |
 | `SUPERMARIO_FORECAST_BUFFER_SECONDS` | `900` | 메모리에 유지할 예측용 snapshot 샘플 기간 초 |
+| `SUPERMARIO_SWMM_RUNTIME_DURATION_SECONDS` | `31536000` | React editor layout에서 생성하는 SWMM 런타임 모델의 실행 길이. 기본값은 365일로 1초 tick 기준 31,536,000 tick |
 | `SUPERMARIO_RISK_POLICY_LEVEL` | `balanced` | 이상상황 확정 기준 레벨. `sensitive`, `balanced`, `strict` 지원 |
 | `SUPERMARIO_RISK_CONTEXT_LEVEL` | `optimal` | LLM trigger payload에 직접 붙일 context 크기. `optimal`, `medium`, `full` 지원 |
 | `SUPERMARIO_RISK_PAUSE_ON_TRIGGER` | `false` | 디버깅용. `true`이면 LLM trigger 발생 tick에서 엔진을 자동 일시정지 |

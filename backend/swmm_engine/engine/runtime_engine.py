@@ -58,6 +58,7 @@ DEFAULT_MAX_RAINFALL_MM_PER_HOUR = 100.0
 DEFAULT_SPEED_MULTIPLIER = 1.0
 MAX_SPEED_MULTIPLIER = 10.0
 MAX_RAINFALL_RATIO = 1000.0
+DEFAULT_RUNTIME_DURATION_SECONDS = 365 * 24 * 60 * 60
 RUNTIME_TICK_LOG_DIR = PACKAGE_DIR / "logs" / "runtime-tick-logs"
 RISK_CONTEXT_LEVELS = ("optimal", "medium", "full")
 
@@ -67,6 +68,16 @@ def env_flag(name: str, default: bool = False) -> bool:
     if raw_value is None:
         return default
     return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(float(str(raw_value).strip()))
+    except (TypeError, ValueError):
+        return default
 
 
 def env_path(name: str, default: Path) -> Path:
@@ -96,6 +107,10 @@ RISK_RESOLUTION_GRACE_TICKS = int(RISK_POLICY.get("resolutionGraceTicks") or 5)
 RISK_PAUSE_ON_TRIGGER = env_flag("SUPERMARIO_RISK_PAUSE_ON_TRIGGER")
 RISK_LLM_SUSTAIN_SECONDS = LLM_DISPATCH_COOLDOWN_SECONDS
 RISK_LLM_EMERGENCY_EVENT_TYPES = {"BLOCKAGE_CLOSED", "REVERSE_FLOW"}
+RUNTIME_DURATION_SECONDS = max(
+    1,
+    env_int("SUPERMARIO_SWMM_RUNTIME_DURATION_SECONDS", DEFAULT_RUNTIME_DURATION_SECONDS),
+)
 RISK_SEVERITY_RANK = {
     "NORMAL": 0,
     "WATCH": 1,
@@ -121,6 +136,7 @@ class RuntimeModelSpec:
     mapping: dict[str, Any]
     report: dict[str, Any]
     source: str
+    duration_seconds: int
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
 
     def cleanup(self) -> None:
@@ -162,18 +178,33 @@ def build_editor_conversion_payload(payload: dict[str, Any]) -> dict[str, Any]:
     scale_m_per_px = float(payload.get("scaleMPerPx", 0.5) or 0.5)
     map_height = float(payload.get("mapHeight", 2000.0) or 2000.0)
     title = str(payload.get("title") or "React editor layout에서 생성한 SWMM model")
+    duration_seconds = runtime_duration_seconds(payload)
+    step_seconds = max(1, int(payload.get("stepSeconds") or DEFAULT_STEP_SECONDS))
     result = convert_layout(layout, scale_m_per_px=scale_m_per_px, map_height=map_height)
-    inp_text = render_inp(result, title=title)
+    inp_text = render_inp(result, title=title, duration_seconds=duration_seconds)
     report = render_conversion_report(result, inp_text=inp_text)
+    report["runtimeDurationSeconds"] = duration_seconds
+    report["runtimeMaxStepIndex"] = math.ceil(duration_seconds / step_seconds)
     mapping = render_mapping_json(result)
     return {
         "ok": len(result.errors) == 0,
         "inpText": inp_text,
         "report": report,
         "mapping": mapping,
+        "durationSeconds": duration_seconds,
         "warnings": result.warnings,
         "errors": result.errors,
     }
+
+
+def runtime_duration_seconds(payload: dict[str, Any]) -> int:
+    raw_value = payload.get("durationSeconds")
+    control = payload.get("control")
+    if raw_value is None and isinstance(control, dict):
+        raw_value = control.get("durationSeconds")
+    if raw_value is None:
+        return RUNTIME_DURATION_SECONDS
+    return max(1, int(safe_number(raw_value, RUNTIME_DURATION_SECONDS)))
 
 
 def build_runtime_model_spec(payload: dict[str, Any]) -> RuntimeModelSpec:
@@ -212,6 +243,7 @@ def build_runtime_model_spec(payload: dict[str, Any]) -> RuntimeModelSpec:
         mapping=conversion["mapping"],
         report=conversion["report"],
         source="react-editor-json",
+        duration_seconds=int(conversion["durationSeconds"]),
         temp_dir=temp_dir,
     )
 
@@ -340,6 +372,8 @@ class RealtimeSwmmSession:
 
         self.mapping = spec.mapping
         self.report = spec.report
+        self.duration_seconds = max(1, int(spec.duration_seconds))
+        self.max_step_index = math.ceil(self.duration_seconds / self.step_seconds)
         self.swmm_nodes = self.mapping.get("swmmNodes") or {}
         self.swmm_links = self.mapping.get("swmmLinks") or {}
         self.node_connected_links = self.build_node_connected_links()
@@ -436,6 +470,8 @@ class RealtimeSwmmSession:
             "modelTime": self.model_time_iso(),
             "stepSeconds": self.step_seconds,
             "stepIndex": self.step_index,
+            "durationSeconds": self.duration_seconds,
+            "maxStepIndex": self.max_step_index,
             "control": self.control_state(),
             **(payload or {}),
         })
@@ -1004,6 +1040,8 @@ class RealtimeSwmmSession:
             "modelTime": self.model_time_iso(),
             "stepSeconds": self.step_seconds,
             "stepIndex": self.step_index,
+            "durationSeconds": self.duration_seconds,
+            "maxStepIndex": self.max_step_index,
             "control": self.control_state(),
             "nodes": node_states,
             "links": link_states,
@@ -1054,6 +1092,8 @@ class SwmmRuntimeEngine:
             "hasSession": session is not None,
             "stepIndex": session.step_index if session else 0,
             "stepSeconds": session.step_seconds if session else DEFAULT_STEP_SECONDS,
+            "durationSeconds": session.duration_seconds if session else RUNTIME_DURATION_SECONDS,
+            "maxStepIndex": session.max_step_index if session else math.ceil(RUNTIME_DURATION_SECONDS / DEFAULT_STEP_SECONDS),
             "modelTime": session.model_time_iso() if session else None,
             "control": session.control_state() if session else {
                 "rainfallRatio": 0.0,

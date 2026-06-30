@@ -287,16 +287,17 @@ context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역
 
 ```json
 {
-  "id": "약한비",
+  "id": "호우",
   "swmm_raw_data": "<LLM context JSON string>",
   "TELEGRAM_BOT_TOKEN": "<bot_token row의 bot_token>",
   "TELEGRAM_CHAT_ID": ["<notification_recipients.chat_id>"]
 }
 ```
 
-`id`는 LangChain 서버 계약에 맞춰 `맑음`, `약한비`, `폭우` 중 하나로
-정규화한다. React 강수 preset은 `0 -> 맑음`, `100 -> 약한비`,
-`300 -> 폭우`로 변환하며, React 라벨 `비옴`도 `약한비`로 변환한다.
+`id`는 LangChain 서버 계약에 맞춰 `맑음`, `우천`, `호우`, `폭우` 중 하나로
+정규화한다. React 강수 preset은 `0 -> 맑음`, `10 -> 우천`,
+`100 -> 호우`, `300 -> 폭우`로 변환한다. 이전 라벨 `비옴`/`약한비`가
+들어오면 호환을 위해 `우천`으로 변환한다.
 명시 ID가 없으면 snapshot/context의 `rainfallRatio` 또는 `rainfallPercent`에서
 동일한 preset을 추론한다.
 
