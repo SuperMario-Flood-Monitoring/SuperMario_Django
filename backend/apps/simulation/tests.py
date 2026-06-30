@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
@@ -43,11 +44,139 @@ class EditorLayoutConversionTests(SimpleTestCase):
 
         result = convert_layout(layout)
         inp_text = render_inp(result, title="test")
+        junction_depths = [node.max_depth for node in result.nodes.values() if node.section == "JUNCTIONS"]
+        junction_ponded_areas = [node.ponded_area for node in result.nodes.values() if node.section == "JUNCTIONS"]
 
         self.assertEqual(result.links[0].initial_setting, 0.0)
+        self.assertTrue(junction_depths)
+        self.assertTrue(all(depth < 1000.0 for depth in junction_depths))
+        self.assertTrue(all(area > 0.0 for area in junction_ponded_areas))
         self.assertIn("[CONDUITS]", inp_text)
         self.assertNotIn("[CONTROLS]", inp_text)
         self.assertNotIn("THEN CONDUIT", inp_text)
+
+    def test_connector_allows_swmm_ponding_depth(self):
+        layout = {
+            "version": 1,
+            "groundSurfaceY": 0,
+            "nodes": [
+                {
+                    "id": "connector-1",
+                    "swmmId": "J_CONN_1",
+                    "name": "접합부",
+                    "type": "connector",
+                    "x": 0,
+                    "y": 100,
+                    "width": 40,
+                    "height": 40,
+                },
+            ],
+            "links": [],
+        }
+
+        result = convert_layout(layout)
+        node = result.nodes["J_CONN_1"]
+
+        self.assertLess(node.max_depth, 1000.0)
+        self.assertEqual(node.ponded_area, 8.0)
+
+    def test_blocked_link_includes_upstream_node_depth_in_editor_state(self):
+        session = RealtimeSwmmSession.__new__(RealtimeSwmmSession)
+        session.swmm_links = {
+            "PIPE_1": {
+                "kind": "CONDUIT",
+                "fromNode": "UPSTREAM_NODE",
+                "toNode": "DOWNSTREAM_NODE",
+            },
+        }
+        session.swmm_nodes = {}
+        session.blockages_by_id = {"PIPE_1": 1.0}
+        session.mapping = {
+            "editorNodes": {
+                "pipe-editor": {
+                    "swmmNodes": [],
+                    "swmmLinks": ["PIPE_1"],
+                },
+            },
+            "editorLinks": {
+                "link-editor": {
+                    "swmmLinks": ["PIPE_1"],
+                },
+            },
+        }
+        session.node_connected_links = {}
+
+        editor_states = session.aggregate_editor_states(
+            {
+                "UPSTREAM_NODE": {
+                    "depthRatio": 1.25,
+                    "floodingCms": 0.03,
+                    "totalInflowCms": 0.5,
+                },
+                "DOWNSTREAM_NODE": {
+                    "depthRatio": 0.05,
+                    "floodingCms": 0.0,
+                    "totalInflowCms": 0.0,
+                },
+            },
+            {
+                "PIPE_1": {
+                    "fullness": 0.2,
+                    "capacityRatio": 0.0,
+                    "blockageRatio": 1.0,
+                    "flowCms": 0.0,
+                    "velocityMps": 0.0,
+                },
+            },
+        )
+
+        self.assertEqual(editor_states["pipe-editor"]["maxDepthRatio"], 1.25)
+        self.assertEqual(editor_states["pipe-editor"]["maxFullness"], 0.0)
+        self.assertEqual(editor_states["pipe-editor"]["maxFloodingCms"], 0.03)
+        self.assertEqual(editor_states["link-editor"]["maxDepthRatio"], 1.25)
+        self.assertEqual(editor_states["link-editor"]["maxFullness"], 0.0)
+        self.assertEqual(editor_states["link-editor"]["totalInflowCms"], 0.5)
+
+    def test_full_link_blockage_closes_upstream_node_outflows_only(self):
+        session = RealtimeSwmmSession.__new__(RealtimeSwmmSession)
+        session.swmm_links = {
+            "PIPE_1": {
+                "kind": "CONDUIT",
+                "fromNode": "NODE_A",
+                "toNode": "NODE_B",
+            },
+            "PIPE_BRANCH": {
+                "kind": "CONDUIT",
+                "fromNode": "NODE_A",
+                "toNode": "NODE_C",
+            },
+            "PIPE_INCOMING": {
+                "kind": "CONDUIT",
+                "fromNode": "NODE_UP",
+                "toNode": "NODE_A",
+            },
+        }
+        session.swmm_nodes = {
+            "NODE_A": {},
+            "NODE_B": {},
+            "NODE_C": {},
+            "NODE_UP": {},
+        }
+        session.control_link_ids = {"PIPE_1"}
+        session.blockages_by_id = {"PIPE_1": 1.0}
+
+        self.assertEqual(session.fully_blocked_outflow_nodes(), {"NODE_A"})
+        self.assertEqual(session.blockage_for_link("PIPE_1"), 1.0)
+        self.assertEqual(session.blockage_for_link("PIPE_BRANCH"), 1.0)
+        self.assertEqual(session.blockage_for_link("PIPE_INCOMING"), 0.0)
+        self.assertEqual(session.blockage_control_link_ids(), {"PIPE_1", "PIPE_BRANCH"})
+
+        session.blockages_by_id = {"PIPE_1": 0.99}
+
+        self.assertEqual(session.fully_blocked_outflow_nodes(), set())
+        self.assertEqual(session.blockage_for_link("PIPE_1"), 0.99)
+        self.assertEqual(session.blockage_for_link("PIPE_BRANCH"), 0.0)
+        self.assertEqual(session.blockage_control_link_ids(), {"PIPE_1"})
 
 
 class LangChainDispatchPayloadTests(SimpleTestCase):
@@ -63,6 +192,7 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
             (100, "호우"),
             (101, "폭우"),
             (300, "폭우"),
+            (500, "폭우"),
             ("0", "맑음"),
             ("5", "맑음"),
             ("10", "우천"),
@@ -70,6 +200,7 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
             ("100", "호우"),
             ("101", "폭우"),
             ("300", "폭우"),
+            ("500", "폭우"),
         ]
 
         for raw_value, expected in cases:
@@ -102,6 +233,7 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
             (50, "우천"),
             (100, "호우"),
             (300, "폭우"),
+            (500, "폭우"),
         ]
 
         for rainfall_ratio, expected in cases:
@@ -164,6 +296,46 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
         self.assertEqual(create_task.call_count, 4)
         self.assertGreater(llm_dispatcher.llm_dispatch_cooldown_remaining_seconds(1003.0), 0)
 
+    def test_merged_dispatch_uses_latest_control_context(self):
+        first_payload = _llm_trigger_payload(step_index=1)
+        second_payload = _llm_trigger_payload(step_index=2, source_id="PIPE_2")
+        first_payload["control"] = {"rainfallRatio": 0.0, "rainfallPercent": 0.0}
+        first_payload["llmTrigger"]["context"]["simulation"] = {
+            "control": {"rainfallRatio": 0.0, "rainfallPercent": 0.0},
+        }
+        second_payload["control"] = {"rainfallRatio": 5.0, "rainfallPercent": 500.0}
+        second_payload["llmTrigger"]["context"]["simulation"] = {
+            "control": {"rainfallRatio": 5.0, "rainfallPercent": 500.0},
+        }
+
+        payload, trigger, context, _dispatch_key = llm_dispatcher.merge_dispatch_candidates(
+            [
+                llm_dispatcher.DispatchCandidate(
+                    payload=first_payload,
+                    trigger=first_payload["llmTrigger"],
+                    context=first_payload["llmTrigger"]["context"],
+                    sanitized_context=first_payload["llmTrigger"]["context"],
+                    dispatch_key="first",
+                    signatures={"first"},
+                ),
+                llm_dispatcher.DispatchCandidate(
+                    payload=second_payload,
+                    trigger=second_payload["llmTrigger"],
+                    context=second_payload["llmTrigger"]["context"],
+                    sanitized_context=second_payload["llmTrigger"]["context"],
+                    dispatch_key="second",
+                    signatures={"second"},
+                ),
+            ],
+            "aggregation_window",
+        )
+
+        self.assertEqual(payload["stepIndex"], 2)
+        self.assertEqual(trigger["reason"], "aggregation_window")
+        self.assertEqual(len(trigger["triggeredIssues"]), 2)
+        self.assertEqual(context["simulation"]["control"]["rainfallPercent"], 500.0)
+        self.assertEqual(extract_situation_id(payload, trigger, context), "폭우")
+
     def test_queues_pending_during_cooldown_and_flushes_after_window(self):
         first_payload = _llm_trigger_payload(step_index=1)
         second_payload = _llm_trigger_payload(step_index=2, source_id="PIPE_2")
@@ -213,6 +385,8 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
                 "build_langchain_request_payload_async",
                 new=AsyncMock(return_value={"id": "우천", "swmm_raw_data": "{}", "TELEGRAM_BOT_TOKEN": None, "TELEGRAM_CHAT_ID": []}),
             ),
+            patch.object(llm_dispatcher, "current_engine_dispatch_skip_detail", return_value=None),
+            patch.object(llm_dispatcher, "pause_engine_for_llm_dispatch", new=AsyncMock(return_value=None)),
             patch.object(llm_dispatcher, "broadcast_llm_request_alert", new=AsyncMock()),
             patch.object(llm_dispatcher, "post_langchain_analysis", side_effect=TimeoutError("timed out")),
             patch.object(llm_dispatcher, "append_llm_dispatch_result_log") as append_result_log,
@@ -231,11 +405,128 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
         append_result_log.assert_called_once()
         self.assertEqual(append_result_log.call_args.kwargs["status"], "response_timeout")
 
-    def test_broadcasts_realtime_alert_right_before_llm_post(self):
+    def test_skips_llm_post_when_engine_is_paused_or_stopped(self):
+        payload = _llm_trigger_payload(step_index=1)
+        trigger = payload["llmTrigger"]
+        context = trigger["context"]
+        cases = [
+            (
+                "engine_paused",
+                {
+                    "running": False,
+                    "paused": True,
+                    "hasSession": True,
+                    "runId": "test-run",
+                    "stepIndex": 1,
+                },
+            ),
+            (
+                "engine_stopped",
+                {
+                    "running": False,
+                    "paused": False,
+                    "hasSession": False,
+                    "runId": None,
+                    "stepIndex": 0,
+                },
+            ),
+        ]
+
+        for expected_reason, status in cases:
+            with self.subTest(expected_reason=expected_reason):
+                build_payload = AsyncMock(return_value={"id": "우천", "swmm_raw_data": "{}", "TELEGRAM_BOT_TOKEN": None, "TELEGRAM_CHAT_ID": []})
+                broadcast_alert = AsyncMock()
+                post_analysis = AsyncMock(return_value={"statusCode": 200, "responseBody": "{}"})
+                with (
+                    patch.object(llm_dispatcher, "current_engine_status_payload", return_value=status),
+                    patch.object(llm_dispatcher, "build_langchain_request_payload_async", new=build_payload),
+                    patch.object(llm_dispatcher, "broadcast_llm_request_alert", new=broadcast_alert),
+                    patch.object(llm_dispatcher, "post_langchain_analysis", new=post_analysis),
+                    patch.object(llm_dispatcher, "append_llm_dispatch_result_log") as append_result_log,
+                ):
+                    result = async_to_sync(llm_dispatcher.dispatch_llm_analysis)(
+                        payload,
+                        trigger,
+                        context,
+                        "dispatch-key",
+                    )
+
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["status"], "engine_state_skipped")
+                self.assertEqual(result["reason"], expected_reason)
+                build_payload.assert_not_called()
+                broadcast_alert.assert_not_called()
+                post_analysis.assert_not_called()
+                append_result_log.assert_called_once()
+                self.assertEqual(append_result_log.call_args.kwargs["status"], "engine_state_skipped")
+                self.assertEqual(append_result_log.call_args.kwargs["detail"]["reason"], expected_reason)
+
+    def test_pause_engine_for_llm_dispatch_broadcasts_paused_status(self):
+        payload = _llm_trigger_payload(step_index=1)
+        trigger = payload["llmTrigger"]
+        captured_payload: dict[str, object] = {}
+
+        class FakeEngine:
+            async def pause(self):
+                return {
+                    "ok": True,
+                    "running": False,
+                    "paused": True,
+                    "hasSession": True,
+                    "runId": "test-run",
+                    "stepIndex": 1,
+                    "modelTime": "2026-06-30T00:00:01",
+                }
+
+        fake_state = SimpleNamespace(
+            engine=FakeEngine(),
+            status_payload=lambda: {
+                "ok": True,
+                "running": False,
+                "paused": True,
+                "hasSession": True,
+                "runId": "test-run",
+                "stepIndex": 1,
+                "modelTime": "2026-06-30T00:00:01",
+                "websocketClients": 2,
+            },
+        )
+
+        async def fake_broadcast_engine_pause_status(pause_payload):
+            captured_payload.update(pause_payload)
+
+        with (
+            patch.object(llm_dispatcher, "current_engine_dispatch_skip_detail", return_value=None),
+            patch.object(llm_dispatcher, "simulation_state_for_dispatch", return_value=fake_state),
+            patch.object(llm_dispatcher, "broadcast_engine_pause_status", new=fake_broadcast_engine_pause_status),
+            patch.object(llm_dispatcher, "append_llm_dispatch_result_log") as append_result_log,
+        ):
+            result = async_to_sync(llm_dispatcher.pause_engine_for_llm_dispatch)(
+                payload,
+                trigger,
+                "dispatch-key",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "engine_auto_paused")
+        self.assertFalse(captured_payload["running"])
+        self.assertTrue(captured_payload["paused"])
+        self.assertEqual(captured_payload["type"], "paused")
+        self.assertEqual(captured_payload["pauseReason"], "llm_dispatch")
+        self.assertEqual(captured_payload["llmDispatchKey"], "dispatch-key")
+        self.assertEqual(captured_payload["websocketClients"], 2)
+        append_result_log.assert_called_once()
+        self.assertEqual(append_result_log.call_args.kwargs["status"], "engine_auto_paused")
+
+    def test_pauses_engine_and_broadcasts_realtime_alert_right_before_llm_post(self):
         payload = _llm_trigger_payload(step_index=1)
         trigger = payload["llmTrigger"]
         context = trigger["context"]
         order: list[str] = []
+
+        async def fake_pause_engine_for_llm_dispatch(*args):
+            order.append("pause")
+            return {"ok": True, "status": "engine_auto_paused"}
 
         async def fake_broadcast_llm_request_alert(*args):
             order.append("broadcast")
@@ -250,6 +541,8 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
                 "build_langchain_request_payload_async",
                 new=AsyncMock(return_value={"id": "우천", "swmm_raw_data": "{}", "TELEGRAM_BOT_TOKEN": None, "TELEGRAM_CHAT_ID": []}),
             ),
+            patch.object(llm_dispatcher, "current_engine_dispatch_skip_detail", return_value=None),
+            patch.object(llm_dispatcher, "pause_engine_for_llm_dispatch", new=fake_pause_engine_for_llm_dispatch),
             patch.object(llm_dispatcher, "broadcast_llm_request_alert", new=fake_broadcast_llm_request_alert),
             patch.object(llm_dispatcher, "post_langchain_analysis", new=fake_post_langchain_analysis),
             patch.object(llm_dispatcher, "append_llm_dispatch_result_log"),
@@ -262,7 +555,7 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
             )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(order, ["broadcast", "post"])
+        self.assertEqual(order, ["pause", "broadcast", "post"])
 
 
 class SimulationRealtimeAlertTests(SimpleTestCase):

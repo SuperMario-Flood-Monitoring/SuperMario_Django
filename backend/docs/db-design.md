@@ -289,8 +289,10 @@ python manage.py ensure_admin_user --only-if-no-admin
 ## Notifications
 
 `apps.auth.models.Notification`에 남아 있는 이전 Telegram token 테이블이다.
-현재 LEVEL 17 알림 전송 기준은 아래 `bot_token`, `notification_recipients`
-테이블이다.
+현재 LLM 알림 발송 bot token은 운영 `.env`의 `TELEGRAM_BOT_TOKEN`을 기준으로
+사용한다. chat ID 수신자는 React/관리 API가 저장한 `NotificationRecipient`
+DB row를 기준으로 사용한다. 아래 `Notification` 테이블은 과거 DB 기반 알림
+설정 맥락으로 남아 있다.
 
 | 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
 | --- | --- | --- | --- | --- |
@@ -300,8 +302,8 @@ python manage.py ensure_admin_user --only-if-no-admin
 
 ## Bot Token
 
-문자를 발송하는 Telegram bot token을 원문으로 저장한다. 운영자가 직접 1개 row를
-삽입해 사용한다.
+이전 DB 기반 문자 발송에서 Telegram bot token을 원문으로 저장하던 테이블이다.
+현재 LLM 발송 payload는 `.env`의 `TELEGRAM_BOT_TOKEN`을 사용한다.
 
 | 컬럼 | Django 타입 | Null | 기본값 | 제약/설명 |
 | --- | --- | --- | --- | --- |

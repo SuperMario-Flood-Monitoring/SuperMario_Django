@@ -11,6 +11,7 @@ def csv_env(name: str, default: str) -> list[str]:
     return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
 
 
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-development-only")
 SUPERMARIO_JWT_SECRET_KEY = os.getenv("SUPERMARIO_JWT_SECRET_KEY", SECRET_KEY)
 DEBUG = os.getenv("DJANGO_DEBUG", "false" if IS_PRODUCTION else "true").lower() == "true"

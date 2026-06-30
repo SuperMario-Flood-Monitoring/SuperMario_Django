@@ -44,6 +44,8 @@ LANGCHAIN_SITUATION_LABEL_BY_VALUE = {
     "100.0": "호우",
     "300": "폭우",
     "300.0": "폭우",
+    "500": "폭우",
+    "500.0": "폭우",
     "맑음": "맑음",
     "비옴": "우천",
     "약한비": "우천",
@@ -392,10 +394,10 @@ def merge_dispatch_candidates(
 ) -> tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any], str]:
     """여러 후보의 위험 이벤트를 하나의 LLM trigger/context로 병합한다."""
 
-    first = candidates[0]
-    payload = dict(first.payload)
-    trigger = dict(first.trigger)
-    context = dict(first.context)
+    latest = candidates[-1]
+    payload = dict(latest.payload)
+    trigger = dict(latest.trigger)
+    context = dict(latest.context)
     trigger["reason"] = reason
 
     triggered_issues = merge_records(
@@ -500,6 +502,9 @@ async def dispatch_llm_analysis(
 ) -> dict[str, Any]:
     """SuperMario_LLM/LangChain 분석 endpoint로 위험 context를 POST한다."""
 
+    if skipped := skip_llm_dispatch_for_engine_state(snapshot, trigger, dispatch_key):
+        return skipped
+
     request_payload = await build_langchain_request_payload_async(snapshot, trigger, context)
 
     logger.debug(
@@ -511,6 +516,10 @@ async def dispatch_llm_analysis(
         request_payload.get("id"),
         sorted(context.keys()),
     )
+
+    auto_pause_result = await pause_engine_for_llm_dispatch(snapshot, trigger, dispatch_key)
+    if auto_pause_result and auto_pause_result.get("status") == "engine_state_skipped":
+        return auto_pause_result
 
     try:
         await broadcast_llm_request_alert(snapshot, trigger, dispatch_key)
@@ -606,6 +615,194 @@ async def dispatch_llm_analysis(
     }
 
 
+def skip_llm_dispatch_for_engine_state(
+    snapshot: Mapping[str, Any],
+    trigger: Mapping[str, Any],
+    dispatch_key: str,
+) -> dict[str, Any] | None:
+    """현재 엔진이 멈춘 상태면 LLM/Telegram 요청 직전에 dispatch를 취소한다."""
+
+    detail = current_engine_dispatch_skip_detail(snapshot)
+    if detail is None:
+        return None
+
+    logger.info(
+        "LLM dispatch skipped because engine is inactive. dispatchKey=%s reason=%s engineStatus=%s",
+        dispatch_key,
+        detail.get("reason"),
+        detail.get("engineStatus"),
+    )
+    append_llm_dispatch_result_log(
+        snapshot,
+        trigger,
+        dispatch_key,
+        status="engine_state_skipped",
+        detail=detail,
+    )
+    return {
+        "ok": False,
+        "status": "engine_state_skipped",
+        "dispatchKey": dispatch_key,
+        "targetService": "SuperMario_LLM",
+        **detail,
+    }
+
+
+async def pause_engine_for_llm_dispatch(
+    snapshot: Mapping[str, Any],
+    trigger: Mapping[str, Any],
+    dispatch_key: str,
+) -> dict[str, Any] | None:
+    """실제 LLM 요청 직전에 실행 중인 SWMM 엔진을 일시정지하고 UI에 알린다."""
+
+    if skipped := skip_llm_dispatch_for_engine_state(snapshot, trigger, dispatch_key):
+        return skipped
+
+    try:
+        simulation_state = simulation_state_for_dispatch()
+        raw_status = await simulation_state.engine.pause()
+        pause_payload = dict(raw_status) if isinstance(raw_status, Mapping) else {}
+
+        try:
+            current_status = simulation_state.status_payload()
+            if isinstance(current_status, Mapping):
+                pause_payload.update(current_status)
+        except Exception as exc:  # pragma: no cover - pause 자체가 성공했으면 UI 전파는 계속 시도한다.
+            logger.warning("LLM dispatch paused engine but status refresh failed: %s", exc)
+
+        pause_payload.update(
+            {
+                "type": "paused",
+                "pauseReason": "llm_dispatch",
+                "llmDispatchKey": dispatch_key,
+                "llmTriggerReason": trigger.get("reason"),
+            }
+        )
+        await broadcast_engine_pause_status(pause_payload)
+    except Exception as exc:  # pragma: no cover - 예기치 못한 pause 실패가 알림 경로를 숨기지 않게 한다.
+        detail = {"error": str(exc)}
+        logger.warning("LLM dispatch engine auto-pause failed. dispatchKey=%s error=%s", dispatch_key, exc)
+        append_llm_dispatch_result_log(
+            snapshot,
+            trigger,
+            dispatch_key,
+            status="engine_auto_pause_failed",
+            detail=detail,
+        )
+        return {
+            "ok": False,
+            "status": "engine_auto_pause_failed",
+            "dispatchKey": dispatch_key,
+            "targetService": "SuperMario_LLM",
+            **detail,
+        }
+
+    detail = {
+        "reason": "llm_dispatch",
+        "engineStatus": summarize_engine_status_for_dispatch(pause_payload),
+    }
+    logger.info(
+        "LLM dispatch auto-paused engine. dispatchKey=%s runId=%s stepIndex=%s",
+        dispatch_key,
+        pause_payload.get("runId"),
+        pause_payload.get("stepIndex"),
+    )
+    append_llm_dispatch_result_log(
+        snapshot,
+        trigger,
+        dispatch_key,
+        status="engine_auto_paused",
+        detail=detail,
+    )
+    return {
+        "ok": True,
+        "status": "engine_auto_paused",
+        "dispatchKey": dispatch_key,
+        "targetService": "SuperMario_LLM",
+        **detail,
+    }
+
+
+async def broadcast_engine_pause_status(payload: Mapping[str, Any]) -> None:
+    """React가 기존 status WebSocket 처리로 PAUSED UI를 표시하도록 상태를 전송한다."""
+
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+
+    await channel_layer.group_send(
+        SIMULATION_GROUP_NAME,
+        {
+            "type": "swmm.message",
+            "payload": dict(payload),
+        },
+    )
+
+
+def current_engine_dispatch_skip_detail(snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
+    """현재 SWMM 엔진 상태를 보고 dispatch를 중단해야 하면 detail을 반환한다."""
+
+    status = current_engine_status_payload()
+    if status is None:
+        return None
+
+    engine_status = summarize_engine_status_for_dispatch(status)
+    snapshot_run_id = snapshot.get("runId")
+    current_run_id = status.get("runId")
+
+    if not status.get("hasSession"):
+        reason = "engine_stopped"
+    elif status.get("paused"):
+        reason = "engine_paused"
+    elif not status.get("running"):
+        reason = "engine_not_running"
+    elif snapshot_run_id and current_run_id and str(snapshot_run_id) != str(current_run_id):
+        reason = "run_id_mismatch"
+    else:
+        return None
+
+    return {
+        "reason": reason,
+        "snapshotRunId": snapshot_run_id,
+        "currentRunId": current_run_id,
+        "engineStatus": engine_status,
+    }
+
+
+def current_engine_status_payload() -> Mapping[str, Any] | None:
+    """순환 import를 피하기 위해 dispatch 시점에 simulation state를 lazy 조회한다."""
+
+    try:
+        status = simulation_state_for_dispatch().status_payload()
+    except Exception as exc:  # pragma: no cover - 상태 조회 실패가 dispatch 장애로 번지지 않게 한다.
+        logger.warning("LLM dispatch engine status check failed: %s", exc)
+        return None
+
+    return status if isinstance(status, Mapping) else None
+
+
+def simulation_state_for_dispatch():
+    """순환 import를 피하기 위해 필요한 시점에 simulation state module을 가져온다."""
+
+    from apps.simulation import state as simulation_state
+
+    return simulation_state
+
+
+def summarize_engine_status_for_dispatch(status: Mapping[str, Any]) -> dict[str, Any]:
+    """dispatch log에 남길 엔진 상태만 추려 로컬 경로 노출을 피한다."""
+
+    return {
+        "running": bool(status.get("running")),
+        "paused": bool(status.get("paused")),
+        "hasSession": bool(status.get("hasSession")),
+        "runId": status.get("runId"),
+        "stepIndex": status.get("stepIndex"),
+        "modelTime": status.get("modelTime"),
+        "lastError": status.get("lastError"),
+    }
+
+
 async def broadcast_llm_request_alert(
     snapshot: Mapping[str, Any],
     trigger: Mapping[str, Any],
@@ -668,15 +865,27 @@ async def build_langchain_request_payload_async(
 
 
 def build_notification_payload() -> dict[str, Any]:
-    """LangChain 서버가 Telegram 알림에 사용할 bot token과 chat ID 목록을 조회한다."""
+    """LangChain 서버가 Telegram 알림에 사용할 token과 DB 수신자 목록을 만든다."""
 
-    from apps.notification.models import BotToken, NotificationRecipient
-
-    bot_token = BotToken.objects.order_by("id").first()
     return {
-        "TELEGRAM_BOT_TOKEN": bot_token.bot_token if bot_token else None,
-        "TELEGRAM_CHAT_ID": list(NotificationRecipient.objects.order_by("id").values_list("chat_id", flat=True)),
+        "TELEGRAM_BOT_TOKEN": notification_bot_token_from_settings(),
+        "TELEGRAM_CHAT_ID": notification_chat_ids_from_db(),
     }
+
+
+def notification_bot_token_from_settings() -> str | None:
+    token = str(getattr(settings, "TELEGRAM_BOT_TOKEN", "") or "").strip()
+    return token or None
+
+
+def notification_chat_ids_from_db() -> list[str]:
+    from apps.notification.models import NotificationRecipient
+
+    return [
+        str(chat_id).strip()
+        for chat_id in NotificationRecipient.objects.order_by("id").values_list("chat_id", flat=True)
+        if str(chat_id).strip()
+    ]
 
 
 def extract_situation_id(

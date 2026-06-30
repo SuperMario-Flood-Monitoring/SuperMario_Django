@@ -158,6 +158,7 @@ Python 단독 실행은 별도 DB 환경변수가 없으면 `backend/db.sqlite3`
 | `SUPERMARIO_LLM_ANALYZE_URL` | `SUPERMARIO_LLM_BASE_URL/analyze` | 위험 context 분석 요청 URL |
 | `SUPERMARIO_LLM_MAINTENANCE_LOG_URL` | `SUPERMARIO_LLM_BASE_URL/maintenance/log/` | 관리자 장애 조치 원문 전달 URL |
 | `SUPERMARIO_LLM_MAINTENANCE_LOG_TIMEOUT_SECONDS` | `10` | 장애 조치 전달 요청 timeout 초 |
+| `TELEGRAM_BOT_TOKEN` | 없음 | LLM 분석 결과 Telegram 발송용 bot token |
 | `SUPERMARIO_FORECAST_MINUTES` | `10` | runtime state 기반 미래 위험 예측 horizon 분 |
 | `SUPERMARIO_FORECAST_WINDOW_SECONDS` | `120` | 예측 증가율 계산에 사용할 최근 관측 구간 초 |
 | `SUPERMARIO_FORECAST_BUFFER_SECONDS` | `900` | 메모리에 유지할 예측용 snapshot 샘플 기간 초 |

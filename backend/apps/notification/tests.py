@@ -1,13 +1,13 @@
 import json
 
 from django.contrib.auth.hashers import make_password
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 
 from apps.auth.models import User
 from apps.auth.tokens import issue_token
 from swmm_engine.llm_dispatcher import build_notification_payload
 
-from .models import BotToken, NotificationRecipient
+from .models import NotificationRecipient
 
 
 class NotificationRecipientApiTests(TestCase):
@@ -75,17 +75,18 @@ class NotificationRecipientApiTests(TestCase):
 
 
 class NotificationPayloadTests(TestCase):
-    def test_builds_notification_payload_for_langchain(self):
-        BotToken.objects.create(bot_token="plain-bot-token")
+    @override_settings(TELEGRAM_BOT_TOKEN="env-bot-token")
+    def test_builds_notification_payload_from_env_token_and_db_recipients(self):
         NotificationRecipient.objects.create(employee_name="홍길동", chat_id="12345")
         NotificationRecipient.objects.create(employee_name="김관리", chat_id="67890")
 
         payload = build_notification_payload()
 
-        self.assertEqual(payload["TELEGRAM_BOT_TOKEN"], "plain-bot-token")
+        self.assertEqual(payload["TELEGRAM_BOT_TOKEN"], "env-bot-token")
         self.assertEqual(payload["TELEGRAM_CHAT_ID"], ["12345", "67890"])
 
-    def test_builds_empty_notification_payload_without_rows(self):
+    @override_settings(TELEGRAM_BOT_TOKEN="")
+    def test_builds_empty_notification_payload_without_env_token_or_recipients(self):
         payload = build_notification_payload()
 
         self.assertIsNone(payload["TELEGRAM_BOT_TOKEN"])

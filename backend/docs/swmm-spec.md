@@ -312,22 +312,22 @@ context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역
 {
   "id": "호우",
   "swmm_raw_data": "<LLM context JSON string>",
-  "TELEGRAM_BOT_TOKEN": "<bot_token row의 bot_token>",
-  "TELEGRAM_CHAT_ID": ["<notification_recipients.chat_id>"]
+  "TELEGRAM_BOT_TOKEN": "<env TELEGRAM_BOT_TOKEN>",
+  "TELEGRAM_CHAT_ID": ["<NotificationRecipient.chat_id>"]
 }
 ```
 
 `id`는 LangChain 서버 계약에 맞춰 `맑음`, `우천`, `호우`, `폭우` 중 하나로
 정규화한다. React 강수 preset은 `0 -> 맑음`, `10 -> 우천`,
-`100 -> 호우`, `300 -> 폭우`로 변환한다. 이전 라벨 `비옴`/`약한비`가
+`100 -> 호우`, `500 -> 폭우`로 변환한다. 이전 라벨 `비옴`/`약한비`가
 들어오면 호환을 위해 `우천`으로 변환한다.
 명시 ID가 없으면 snapshot/context의 `rainfallRatio` 또는 `rainfallPercent`에서
 동일한 preset을 추론한다.
 
-`TELEGRAM_BOT_TOKEN`은 `bot_token` 테이블의 첫 row에서 원문으로 조회하고,
-`TELEGRAM_CHAT_ID`는 `notification_recipients`의 모든 `chat_id`를 원문으로
-조회한다. `bot_token` row가 없으면 `TELEGRAM_BOT_TOKEN`은 `null`, 대상자가
-없으면 `TELEGRAM_CHAT_ID`는 빈 배열이다.
+`TELEGRAM_BOT_TOKEN`은 Django 컨테이너 `.env`에서 읽고, `TELEGRAM_CHAT_ID`는
+React/관리 API로 저장한 `NotificationRecipient` DB row에서 읽는다.
+운영에서는 Infra의 `PRODUCTION_ENV_YAML_B64`가 서버 `.env`로 렌더링되고,
+backend 컨테이너와 LLM 컨테이너가 같은 Telegram env 값을 받는다.
 
 LLM 발송은 `backend/docs/policy.md`의 문자 발송 정책을
 따른다. 일반 CRITICAL 위험은 `SUPERMARIO_LLM_AGGREGATION_SECONDS` 동안 묶은 뒤
@@ -338,6 +338,14 @@ LLM 발송은 `backend/docs/policy.md`의 문자 발송 정책을
 runtime risk 기준의 `BLOCKAGE_CLOSED`, `REVERSE_FLOW`는 일반 cooldown 예외이며
 `SUPERMARIO_LLM_EMERGENCY_AGGREGATION_SECONDS` 동안 묶어 발송한다. forecast의
 `PREDICTED_BLOCKAGE_CLOSED`는 일반 forecast CRITICAL 위험으로 처리한다.
+
+dispatch가 aggregation/cooldown으로 지연된 사이 사용자가 엔진을 일시정지하거나
+정지할 수 있으므로, Django는 실제 LLM POST 직전에 현재 엔진 상태를 다시 확인한다.
+`running=false`, `paused=true`, session 없음, 또는 `runId` mismatch이면 LLM 서버로
+보내지 않고 `engine_state_skipped` 결과로 기록한다.
+상태 확인을 통과하면 Django는 LLM POST 직전에 SWMM 엔진을 자동 일시정지하고
+WebSocket status payload를 전송해 React 런타임 UI가 `PAUSED`로 바뀌게 한다.
+이때 자동 일시정지된 같은 dispatch의 LLM 요청은 계속 전송된다.
 
 LangChain 응답 대기 시간은 `LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS` 상수로
 관리한다. 응답 timeout은 Telegram/SNS 발송 같은 LangChain 서버 내부 처리가 이미

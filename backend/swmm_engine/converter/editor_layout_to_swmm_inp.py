@@ -314,7 +314,7 @@ def normalize_outfall_kind(node: dict[str, Any]) -> str:
     return kind if kind in OUTFALL_WATER_KIND else "generic"
 
 
-FLOOD_ALLOWED_NODE_TYPES = {"catchBasin", "manhole"}
+FLOOD_ALLOWED_NODE_TYPES = {"catchBasin", "connector", "elbowConnector", "manhole", "pipeSegment", "teeConnector"}
 NO_FLOOD_STORAGE_MAX_DEPTH_M = 1000.0
 
 
@@ -342,6 +342,8 @@ def node_depth_defaults(node: dict[str, Any]) -> tuple[float, float, float, floa
         return 1.20, 0.00, 0.70, 18.0
     if node_type == "manhole":
         return max(2.5, height * 0.018), 0.00, 1.20, 20.0
+    if node_type == "pipeSegment":
+        return 1.50, 0.00, 0.50, 8.0
     if node_type == "facility":
         kind = normalize_facility_kind(node)
         if kind == "waterReclamationCenter":
@@ -356,7 +358,7 @@ def node_depth_defaults(node: dict[str, Any]) -> tuple[float, float, float, floa
     if node_type in {"apartment", "house"}:
         return 1.00, 0.00, 0.50, 0.0
     if node_type in {"connector", "elbowConnector", "teeConnector"}:
-        return 1.50, 0.00, 0.50, 0.0
+        return 1.50, 0.00, 0.50, 8.0
     return 2.00, 0.00, 0.50, 0.0
 
 
