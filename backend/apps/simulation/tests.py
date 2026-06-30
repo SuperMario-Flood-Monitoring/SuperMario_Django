@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase
 
+from apps.simulation.realtime_alerts import build_realtime_alert
 from swmm_engine import llm_dispatcher
 from swmm_engine.converter.editor_layout_to_swmm_inp import convert_layout, render_inp
 from swmm_engine.engine import runtime_engine
@@ -212,6 +213,7 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
                 "build_langchain_request_payload_async",
                 new=AsyncMock(return_value={"id": "우천", "swmm_raw_data": "{}", "TELEGRAM_BOT_TOKEN": None, "TELEGRAM_CHAT_ID": []}),
             ),
+            patch.object(llm_dispatcher, "broadcast_llm_request_alert", new=AsyncMock()),
             patch.object(llm_dispatcher, "post_langchain_analysis", side_effect=TimeoutError("timed out")),
             patch.object(llm_dispatcher, "append_llm_dispatch_result_log") as append_result_log,
             self.assertLogs("swmm_engine.llm_dispatcher", level="INFO") as logs,
@@ -228,6 +230,62 @@ class LangChainDispatchPayloadTests(SimpleTestCase):
         self.assertNotIn("LLM dispatch failed.", "\n".join(logs.output))
         append_result_log.assert_called_once()
         self.assertEqual(append_result_log.call_args.kwargs["status"], "response_timeout")
+
+    def test_broadcasts_realtime_alert_right_before_llm_post(self):
+        payload = _llm_trigger_payload(step_index=1)
+        trigger = payload["llmTrigger"]
+        context = trigger["context"]
+        order: list[str] = []
+
+        async def fake_broadcast_llm_request_alert(*args):
+            order.append("broadcast")
+
+        async def fake_post_langchain_analysis(_request_payload):
+            order.append("post")
+            return {"statusCode": 200, "responseBody": "{}"}
+
+        with (
+            patch.object(
+                llm_dispatcher,
+                "build_langchain_request_payload_async",
+                new=AsyncMock(return_value={"id": "우천", "swmm_raw_data": "{}", "TELEGRAM_BOT_TOKEN": None, "TELEGRAM_CHAT_ID": []}),
+            ),
+            patch.object(llm_dispatcher, "broadcast_llm_request_alert", new=fake_broadcast_llm_request_alert),
+            patch.object(llm_dispatcher, "post_langchain_analysis", new=fake_post_langchain_analysis),
+            patch.object(llm_dispatcher, "append_llm_dispatch_result_log"),
+        ):
+            result = async_to_sync(llm_dispatcher.dispatch_llm_analysis)(
+                payload,
+                trigger,
+                context,
+                "dispatch-key",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(order, ["broadcast", "post"])
+
+
+class SimulationRealtimeAlertTests(SimpleTestCase):
+    def test_builds_realtime_alert_payload_for_triggered_llm_event(self):
+        trigger = _llm_trigger_payload(step_index=1, event_type="PREDICTED_FULL_PIPE", source_id="PIPE_1")["llmTrigger"]
+
+        alert = build_realtime_alert(trigger, source="llm_request")
+
+        self.assertIsNotNone(alert)
+        alert = alert or {}
+        self.assertEqual(alert["kind"], "persistent_abnormal")
+        self.assertEqual(alert["severity"], "CRITICAL")
+        self.assertEqual(alert["title"], "지속적인 이상 현상 감지")
+        self.assertEqual(alert["reason"], "new_issue")
+        self.assertIn("LLM 분석 요청을 전송", alert["message"])
+        self.assertIn("PIPE_1 만관 예측", alert["message"])
+        self.assertEqual(alert["key"], "llm_request|new_issue|PREDICTED_FULL_PIPE:link:PIPE_1")
+        self.assertEqual(alert["triggeredIssues"][0]["sourceId"], "PIPE_1")
+
+    def test_ignores_non_triggered_llm_event(self):
+        alert = build_realtime_alert({"shouldTrigger": False}, source="llm_request")
+
+        self.assertIsNone(alert)
 
 
 class RiskLifecycleTriggerTests(SimpleTestCase):

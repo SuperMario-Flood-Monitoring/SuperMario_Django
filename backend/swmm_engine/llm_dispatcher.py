@@ -16,7 +16,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from channels.layers import get_channel_layer
 from django.conf import settings
+
+from apps.simulation.realtime_alerts import build_realtime_alert
 
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,7 @@ LLM_DISPATCH_RESPONSE_TIMEOUT_SECONDS = 30
 DEFAULT_LANGCHAIN_SITUATION_ID = "우천"
 CRITICAL_SEVERITY = "CRITICAL"
 EMERGENCY_RUNTIME_EVENT_TYPES = {"BLOCKAGE_CLOSED", "REVERSE_FLOW"}
+SIMULATION_GROUP_NAME = "simulation"
 LANGCHAIN_SITUATION_LABEL_BY_VALUE = {
     "0": "맑음",
     "0.0": "맑음",
@@ -509,6 +513,7 @@ async def dispatch_llm_analysis(
     )
 
     try:
+        await broadcast_llm_request_alert(snapshot, trigger, dispatch_key)
         response = await post_langchain_analysis(request_payload)
     except (TimeoutError, socket.timeout) as exc:
         detail = {
@@ -599,6 +604,39 @@ async def dispatch_llm_analysis(
         "targetService": "SuperMario_LLM",
         **response,
     }
+
+
+async def broadcast_llm_request_alert(
+    snapshot: Mapping[str, Any],
+    trigger: Mapping[str, Any],
+    dispatch_key: str,
+) -> None:
+    """실제 LLM HTTP 요청 직전에 React WebSocket 소비자에게 알린다."""
+
+    realtime_alert = build_realtime_alert(trigger, source="llm_request")
+    if realtime_alert is None:
+        return
+    realtime_alert["dispatchKey"] = dispatch_key
+
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+
+    await channel_layer.group_send(
+        SIMULATION_GROUP_NAME,
+        {
+            "type": "swmm.message",
+            "payload": {
+                "type": "llm_alert",
+                "ok": True,
+                "runId": snapshot.get("runId"),
+                "stepIndex": snapshot.get("stepIndex"),
+                "modelTime": snapshot.get("modelTime"),
+                "dispatchKey": dispatch_key,
+                "realtimeAlert": realtime_alert,
+            },
+        },
+    )
 
 
 def build_langchain_request_payload(
