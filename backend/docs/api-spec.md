@@ -2,8 +2,8 @@
 
 ## 문서 정보
 
-- 기준일: 2026-06-23
-- 기준 구현: `config/urls.py`, `apps/*/urls.py`, `apps/*/apis/*.py`, `apps/facilities/views.py`, `apps/monitoring/views.py`
+- 기준일: 2026-06-29
+- 기준 구현: `config/urls.py`, `apps/*/urls.py`, `apps/*/apis/*.py`, `apps/facilities/views.py`, `apps/monitoring/apis/hazard_api.py`
 - Base URL: `http://127.0.0.1:8000`
 - Content-Type: `application/json`
 - 인증: `/api/auth/login`, `/api/auth/refresh`, `/api/engine/health`를 제외한
@@ -17,7 +17,7 @@
 | 에디터 변환 | `/api/editor/`       | `apps/simulation/apis/editor_api.py`         |
 | 시나리오    | `/api/scenarios`     | `apps/scenarios/apis/scenario_api.py`        |
 | 시설        | `/api/facilities/`   | `apps/facilities/views.py`                   |
-| 위험 로그   | `/api/hazards`       | `apps/monitoring/views.py`                   |
+| 위험 로그   | `/api/hazards`       | `apps/monitoring/apis/hazard_api.py`         |
 | 알림 수신자 | `/api/notification/` | `apps/notification/apis/notification_api.py` |
 | 인증        | `/api/auth/`         | `apps/auth/apis.py`                          |
 | 관리자      | `/admin/`            | Django admin                                 |
@@ -193,7 +193,7 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
 
 - Method: `GET`
 - Path: `/api/hazards`
-- Query: `status=OPEN`, `includeDeleted=false`
+- Query: `status=ALL`, `includeDeleted=true`
 - 성공: `200 OK`
 
 응답은 배열이다.
@@ -208,7 +208,15 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
     "hazard_level": "CRITICAL",
     "hazard_type": "REVERSE_FLOW",
     "hazard_detail": "파이프(pipe_free_1781771871446)에서 역류가 감지되었습니다.",
+    "action_detail": "",
     "status": "OPEN",
+    "priorityScore": 177.0,
+    "priorityBand": "P1",
+    "priorityReasons": [
+      "CRITICAL 위험",
+      "역류 위험",
+      "역류 흐름 flowCms=-0.034"
+    ],
     "created_at": "2026-06-25T12:00:00"
   }
 ]
@@ -217,6 +225,15 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
 `source`가 `link`가 아니면 `pipe_id`는 `null`일 수 있다. 이 저장소는 React
 클라이언트를 포함하지 않으므로 현재는 클라이언트가 3초 polling 등으로 이 API를
 호출하는 방식만 제공한다.
+`status`를 생략하면 기본값은 `ALL`이다. `ALL`은 상태 필터를 걸지 않아
+`OPEN`, `IN_PROGRESS`, `RESOLVED`를 모두 반환한다. `includeDeleted` 기본값은
+`true`이므로 조치 완료로 `is_deleted=true`가 된 `RESOLVED` 로그도 목록에 포함된다.
+기존처럼 처리 전 로그만 보려면 `status=OPEN&includeDeleted=false`를 명시한다.
+목록은 `priorityScore` 내림차순으로 정렬한다.
+목록 DTO는 Grid 표시용 요약 정보만 반환한다. `IN_PROGRESS` 행의 `action_detail`에는
+현재 조치 중인 최신 `HazardAction.action_detail`이 들어간다. `OPEN`, `RESOLVED` 행의
+`action_detail`은 빈 문자열이다. `result_detail`, `recurrence_note`를 포함한 전체 조치
+이력은 `GET /api/hazards/{hazard_id}` 상세 응답의 `actions` 배열에서 확인한다.
 
 ### 10분 위험 예측 조회
 
@@ -261,7 +278,10 @@ ADMIN access token이 필요하다. 위험 로그는 SWMM runtime snapshot의
         "rainfallLevel": "heavy",
         "forecastMinutes": 10
       },
-      "reason": "10분 뒤 fullness 위험이 예측되었습니다."
+      "reason": "10분 뒤 fullness 위험이 예측되었습니다.",
+      "priorityScore": 147.5,
+      "priorityBand": "P2",
+      "priorityReasons": ["CRITICAL 위험", "만관 위험"]
     }
   ],
   "predictions": []
@@ -295,6 +315,13 @@ SWMM snapshot 원본 전체는 반환하지 않는다.
   "hazard_type": "REVERSE_FLOW",
   "hazard_detail": "파이프(pipe_free_1781771871446)에서 역류가 감지되었습니다.",
   "status": "OPEN",
+  "priorityScore": 177.0,
+  "priorityBand": "P1",
+  "priorityReasons": [
+    "CRITICAL 위험",
+    "역류 위험",
+    "역류 흐름 flowCms=-0.034"
+  ],
   "run_id": "20260624-164620-7faf56be",
   "step_index": 3087,
   "model_time": "2026-06-16T00:51:27",
@@ -306,7 +333,7 @@ SWMM snapshot 원본 전체는 반환하지 않는다.
 }
 ```
 
-### 위험 로그 조치 저장
+### 위험 로그 조치 시작 저장
 
 - Method: `POST`
 - Path: `/api/hazards/{hazard_id}/actions`
@@ -315,27 +342,60 @@ SWMM snapshot 원본 전체는 반환하지 않는다.
 
 ```json
 {
-  "action_detail": "하류 관로 현장 점검 완료",
-  "action_type": "FIELD_CHECK",
-  "result_detail": "토사 제거 후 수위 안정화",
-  "result_status": "RESOLVED",
-  "recurrence_note": "폭우 시 상류 맨홀 우선 점검",
-  "complete": true
+  "action_detail": "하류 관로 현장 점검 진행",
+  "action_type": "FIELD_CHECK"
 }
 ```
 
-`complete=true`이면 위험 로그는 실제 삭제하지 않고 `status=RESOLVED`,
-`is_deleted=true`, `resolved_at=현재 시각`으로 논리 삭제 처리한다. 동시에
-위험 상황과 조치 내용을 결합한 `embedding_text`를 만들고
-`HazardCaseEmbedding` row에 임시 `vector_id`와 함께 저장한다.
-`complete=false`이면 위험 로그는 `status=IN_PROGRESS`로 변경하고 embedding
-row는 만들지 않는다.
+조치 시작 저장은 `action_detail` 원문을 `HazardAction`에 저장하고 위험 로그를
+`status=IN_PROGRESS`로 변경한다. 이 시점에는 결과가 없으므로
+`HazardCaseEmbedding` row를 만들지 않고 FastAPI/LangChain maintenance log
+endpoint로도 전송하지 않는다.
 
-조치 저장 후 Django는 FastAPI/LangChain 서버의 maintenance log endpoint로
-위험 사건, 당시 주요 지표, React에서 받은 조치/결과/재발 참고사항을 구조화해
-전달한다. FastAPI 요청이 실패해도
-`HazardAction` 저장과 완료 처리는 롤백하지 않고, 연동 결과만
-`fastapi_sync`에 기록한다.
+조치 시작 응답의 주요 필드:
+
+```json
+{
+  "id": 1,
+  "event_id": 1,
+  "action_detail": "하류 관로 현장 점검 진행",
+  "action_type": "FIELD_CHECK",
+  "result_detail": "",
+  "result_status": "",
+  "recurrence_note": "",
+  "fastapi_sync": {
+    "status": "PENDING",
+    "vector_id": "",
+    "error_message": ""
+  }
+}
+```
+
+### 위험 로그 조치 완료 저장
+
+- Method: `PATCH`
+- Path: `/api/hazards/{hazard_id}/actions/{action_id}`
+- 성공: `200 OK`
+- 실패: `400 Bad Request`, `404 Not Found`
+
+```json
+{
+  "result_detail": "토사 제거 후 수위 안정화",
+  "result_status": "RESOLVED",
+  "recurrence_note": "폭우 시 상류 맨홀 우선 점검"
+}
+```
+
+`result_detail`은 필수다. `recurrence_note`는 선택값이다. 완료 저장 시 위험
+로그는 실제 삭제하지 않고 `status=RESOLVED`, `is_deleted=true`,
+`resolved_at=현재 시각`으로 논리 삭제 처리한다. 동시에 위험 상황, 조치 내용,
+결과, 재발 참고사항을 결합한 `embedding_text`를 만들고 `HazardCaseEmbedding`
+row에 임시 `vector_id`와 함께 저장한다.
+
+조치 완료 저장 후 Django는 FastAPI/LangChain 서버의 maintenance log endpoint로
+위험 사건, 당시 주요 지표, 기존 조치 내용, 결과, 재발 참고사항을 구조화해
+전달한다. FastAPI 요청이 실패해도 `HazardAction` 업데이트와 완료 처리는
+롤백하지 않고, 연동 결과만 `fastapi_sync`에 기록한다.
 
 Django가 FastAPI로 보내는 body:
 
@@ -351,6 +411,15 @@ Django가 FastAPI로 보내는 body:
     "hazard_type": "REVERSE_FLOW",
     "hazard_level": "CRITICAL",
     "hazard_detail": "파이프(pipe_free_1781771871446)에서 역류가 감지되었습니다.",
+    "priority": {
+      "priorityScore": 177.0,
+      "priorityBand": "P1",
+      "priorityReasons": [
+        "CRITICAL 위험",
+        "역류 위험",
+        "역류 흐름 flowCms=-0.034"
+      ]
+    },
     "created_at": "2026-06-26T15:51:00"
   },
   "metrics": {
@@ -359,7 +428,7 @@ Django가 FastAPI로 보내는 body:
   },
   "action": {
     "status": "RESOLVED",
-    "initial_action_detail": "하류 관로 현장 점검 완료",
+    "initial_action_detail": "하류 관로 현장 점검 진행",
     "action_type": "FIELD_CHECK",
     "result_detail": "토사 제거 후 수위 안정화",
     "result_status": "RESOLVED",
@@ -375,7 +444,7 @@ Django가 FastAPI로 보내는 body:
 {
   "id": 1,
   "event_id": 1,
-  "action_detail": "하류 관로 현장 점검 완료",
+  "action_detail": "하류 관로 현장 점검 진행",
   "action_type": "FIELD_CHECK",
   "result_detail": "토사 제거 후 수위 안정화",
   "result_status": "RESOLVED",

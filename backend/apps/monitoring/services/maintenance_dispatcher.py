@@ -10,10 +10,20 @@ from django.conf import settings
 from django.utils import timezone
 
 from ..models import HazardAction
+from swmm_engine.risk.priority import calculate_priority
 
 
 def build_maintenance_log_payload(action: HazardAction) -> dict[str, Any]:
     event = action.event
+    priority = calculate_priority(
+        {
+            "eventType": event.hazard_type,
+            "severity": event.hazard_level,
+            "source": event.source,
+            "sourceId": event.target_id,
+        },
+        event.metrics_snapshot,
+    )
     return {
         "event": {
             "id": event.id,
@@ -25,6 +35,7 @@ def build_maintenance_log_payload(action: HazardAction) -> dict[str, Any]:
             "hazard_type": event.hazard_type,
             "hazard_level": event.hazard_level,
             "hazard_detail": event.hazard_detail,
+            "priority": priority,
             "created_at": event.created_at.isoformat(timespec="seconds") if event.created_at else None,
         },
         "metrics": dict(event.metrics_snapshot or {}),

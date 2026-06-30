@@ -6,6 +6,7 @@ from statistics import median
 from typing import Any, Mapping
 
 from django.conf import settings
+from swmm_engine.risk.priority import enrich_risk_event_priority
 
 
 FORECAST_MINUTES = settings.SUPERMARIO_FORECAST_MINUTES
@@ -362,7 +363,7 @@ def _severity_for_blockage(blockage_ratio: float) -> str:
 
 
 def _event_from_prediction(prediction: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    event = {
         "eventId": f"{prediction['hazardType']}:{prediction['source']}:{prediction['targetId']}",
         "eventType": prediction["hazardType"],
         "severity": prediction["severity"],
@@ -379,6 +380,7 @@ def _event_from_prediction(prediction: Mapping[str, Any]) -> dict[str, Any]:
         },
         "reason": _prediction_reason(prediction),
     }
+    return enrich_risk_event_priority(event)
 
 
 def _prediction_reason(prediction: Mapping[str, Any]) -> str:
@@ -396,7 +398,14 @@ def _forecast_payload(
     predictions: list[dict[str, Any]],
     message: str | None = None,
 ) -> dict[str, Any]:
-    events.sort(key=lambda event: (-_severity_rank(event["severity"]), event["eventType"], event["sourceId"]))
+    events.sort(
+        key=lambda event: (
+            -float(event.get("priorityScore") or 0.0),
+            -_severity_rank(event["severity"]),
+            event["eventType"],
+            event["sourceId"],
+        )
+    )
     predictions.sort(key=lambda item: (-_severity_rank(item["severity"]), -float(item["predictedValue"]), item["targetId"]))
     payload = {
         "ok": True,

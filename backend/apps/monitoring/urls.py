@@ -1,13 +1,9 @@
 from django.urls import path
 
-from .views import HazardActionView, HazardDetailView, HazardForecastView, HazardListView
-
+from .apis import hazard_api
 
 app_name = "monitoring"
 
 urlpatterns = [
-    path("hazards", HazardListView.as_view(), name="hazard-list"),
-    path("hazards/forecast", HazardForecastView.as_view(), name="hazard-forecast"),
-    path("hazards/<int:hazard_id>", HazardDetailView.as_view(), name="hazard-detail"),
-    path("hazards/<int:hazard_id>/actions", HazardActionView.as_view(), name="hazard-action"),
+    path("", hazard_api.urls),
 ]

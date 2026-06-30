@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, Literal
 
+from .priority import enrich_risk_event_priority
+
 
 ContextLevel = Literal["optimal", "medium", "full"]
 Severity = Literal["NORMAL", "WATCH", "WARNING", "CRITICAL"]
@@ -472,7 +474,16 @@ def evaluate_swmm_risk(
             _condition_ticks(counters, flooding_key, False)
             _condition_ticks(counters, fill_key, False)
 
-    events = sorted(events, key=lambda item: (-SEVERITY_RANK[item["severity"]], item["eventType"], item["sourceId"]))
+    events = [enrich_risk_event_priority(event) for event in events]
+    events = sorted(
+        events,
+        key=lambda item: (
+            -float(item.get("priorityScore") or 0.0),
+            -SEVERITY_RANK[item["severity"]],
+            item["eventType"],
+            item["sourceId"],
+        ),
+    )
     highest = _highest_severity(events)
 
     return {

@@ -9,12 +9,15 @@ from django.utils import timezone
 from ..models import HazardAction, HazardCaseEmbedding, HazardEvent
 from .maintenance_dispatcher import dispatch_maintenance_log
 from .vector_service import build_embedding_text, save_hazard_case_to_vector_db
+from swmm_engine.risk.priority import calculate_priority
 
 
 CRITICAL_LEVEL = "CRITICAL"
 
 
 def serialize_hazard_row(event: HazardEvent) -> dict[str, Any]:
+    priority = hazard_event_priority(event)
+    current_action = latest_action_for_row(event)
     return {
         "id": event.id,
         "target_id": event.target_id,
@@ -23,7 +26,9 @@ def serialize_hazard_row(event: HazardEvent) -> dict[str, Any]:
         "hazard_level": event.hazard_level,
         "hazard_type": event.hazard_type,
         "hazard_detail": event.hazard_detail,
+        "action_detail": current_action.action_detail if current_action is not None else "",
         "status": event.status,
+        **priority,
         "created_at": event.created_at.isoformat(),
     }
 
@@ -41,7 +46,9 @@ def serialize_hazard_detail(event: HazardEvent) -> dict[str, Any]:
                     "id": action.id,
                     "action_detail": action.action_detail,
                     "action_type": action.action_type,
+                    "result_detail": action.result_detail,
                     "result_status": action.result_status,
+                    "recurrence_note": action.recurrence_note,
                     "fastapi_sync_status": action.fastapi_sync_status,
                     "fastapi_vector_id": action.fastapi_vector_id,
                     "fastapi_error_message": action.fastapi_error_message,
@@ -55,12 +62,34 @@ def serialize_hazard_detail(event: HazardEvent) -> dict[str, Any]:
 
 
 def list_hazard_events(status: str = HazardEvent.Status.OPEN, include_deleted: bool = False) -> list[HazardEvent]:
-    queryset = HazardEvent.objects.all()
-    if status:
-        queryset = queryset.filter(status=status)
+    queryset = HazardEvent.objects.prefetch_related("actions").all()
+    normalized_status = str(status or "").upper()
+    if normalized_status and normalized_status != "ALL":
+        queryset = queryset.filter(status=normalized_status)
     if not include_deleted:
         queryset = queryset.filter(is_deleted=False)
-    return list(queryset)
+    return sorted(
+        list(queryset),
+        key=lambda event: (-float(hazard_event_priority(event)["priorityScore"]), event.created_at),
+    )
+
+
+def latest_action_for_row(event: HazardEvent) -> HazardAction | None:
+    if event.status != HazardEvent.Status.IN_PROGRESS:
+        return None
+    return event.actions.all().last()
+
+
+def hazard_event_priority(event: HazardEvent) -> dict[str, Any]:
+    return calculate_priority(
+        {
+            "eventType": event.hazard_type,
+            "severity": event.hazard_level,
+            "source": event.source,
+            "sourceId": event.target_id,
+        },
+        event.metrics_snapshot,
+    )
 
 
 def create_hazard_events_from_swmm_tick(tick: Mapping[str, Any]) -> list[HazardEvent]:
@@ -167,7 +196,7 @@ def display_name_for_event(event: Mapping[str, Any], tick: Mapping[str, Any]) ->
     return None
 
 
-def complete_hazard_action(event_id: int, payload: Mapping[str, Any]) -> HazardAction:
+def start_hazard_action(event_id: int, payload: Mapping[str, Any]) -> HazardAction:
     with transaction.atomic():
         event = get_object_or_404(HazardEvent.objects.select_for_update(), id=event_id)
         action_detail = str(payload.get("action_detail") or "").strip()
@@ -178,37 +207,64 @@ def complete_hazard_action(event_id: int, payload: Mapping[str, Any]) -> HazardA
             event=event,
             action_detail=action_detail,
             action_type=str(payload.get("action_type") or "").strip(),
-            result_detail=str(payload.get("result_detail") or "").strip(),
-            result_status=str(payload.get("result_status") or "").strip(),
-            recurrence_note=str(payload.get("recurrence_note") or "").strip(),
+        )
+        event.status = HazardEvent.Status.IN_PROGRESS
+        event.save(update_fields=["status", "updated_at"])
+
+    action.refresh_from_db()
+    return action
+
+
+def complete_hazard_action(event_id: int, action_id: int, payload: Mapping[str, Any]) -> HazardAction:
+    with transaction.atomic():
+        event = get_object_or_404(HazardEvent.objects.select_for_update(), id=event_id)
+        action = get_object_or_404(HazardAction.objects.select_for_update(), id=action_id, event=event)
+
+        result_detail = str(payload.get("result_detail") or "").strip()
+        if not result_detail:
+            raise ValueError("result_detail은 필수입니다.")
+
+        action.result_detail = result_detail
+        action.recurrence_note = str(payload.get("recurrence_note") or "").strip()
+        action.result_status = str(payload.get("result_status") or HazardEvent.Status.RESOLVED).strip()
+        if "action_detail" in payload:
+            action_detail = str(payload.get("action_detail") or "").strip()
+            if not action_detail:
+                raise ValueError("action_detail은 비워둘 수 없습니다.")
+            action.action_detail = action_detail
+        if "action_type" in payload:
+            action.action_type = str(payload.get("action_type") or "").strip()
+        action.save(
+            update_fields=[
+                "action_detail",
+                "action_type",
+                "result_detail",
+                "result_status",
+                "recurrence_note",
+            ]
         )
 
-        is_complete = bool(payload.get("complete", True))
-        if is_complete:
-            event.status = HazardEvent.Status.RESOLVED
-            event.is_deleted = True
-            event.resolved_at = timezone.now()
-            event.save(update_fields=["status", "is_deleted", "resolved_at", "updated_at"])
+        event.status = HazardEvent.Status.RESOLVED
+        event.is_deleted = True
+        event.resolved_at = timezone.now()
+        event.save(update_fields=["status", "is_deleted", "resolved_at", "updated_at"])
 
-            embedding_text = build_embedding_text(event, action)
-            metadata = {
-                "event_id": event.id,
-                "target_id": event.target_id,
-                "source": event.source,
-                "hazard_level": event.hazard_level,
-                "hazard_type": event.hazard_type,
-                "run_id": event.run_id,
-            }
-            vector_id = save_hazard_case_to_vector_db(embedding_text, metadata)
-            HazardCaseEmbedding.objects.create(
-                event=event,
-                embedding_text=embedding_text,
-                vector_id=vector_id,
-                metadata=metadata,
-            )
-        else:
-            event.status = HazardEvent.Status.IN_PROGRESS
-            event.save(update_fields=["status", "updated_at"])
+        embedding_text = build_embedding_text(event, action)
+        metadata = {
+            "event_id": event.id,
+            "target_id": event.target_id,
+            "source": event.source,
+            "hazard_level": event.hazard_level,
+            "hazard_type": event.hazard_type,
+            "run_id": event.run_id,
+        }
+        vector_id = save_hazard_case_to_vector_db(embedding_text, metadata)
+        HazardCaseEmbedding.objects.create(
+            event=event,
+            embedding_text=embedding_text,
+            vector_id=vector_id,
+            metadata=metadata,
+        )
 
     dispatch_maintenance_log(action)
     action.refresh_from_db()

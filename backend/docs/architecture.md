@@ -2,7 +2,7 @@
 
 ## 문서 정보
 
-- 기준일: 2026-06-23
+- 기준일: 2026-06-29
 - 기준 구현: `config`, `apps`, `swmm_engine`
 
 ## 범위
@@ -15,6 +15,19 @@ WebSocket으로 전달된다.
 React 클라이언트와 FastAPI LangChain 서버는 외부 시스템이며 이 저장소에서
 구현하지 않는다. LangChain 호출은 `swmm_engine/llm_dispatcher.py`에서
 위험 trigger 발생 시 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다.
+
+## 관련 문서
+
+| 문서 | 내용 |
+| --- | --- |
+| `api-spec.md` | HTTP API 계약 |
+| `websocket-spec.md` | WebSocket 연결과 snapshot 구조 |
+| `policy.md` | 인증, 위험, forecast, 우선순위, 문자 발송, 조치 정책 |
+| `features.md` | 기능별 구현 현황 |
+| `technology.md` | 기술 스택과 외부 연동 |
+| `data-model.md` | Django DB 모델과 VectorDB 논리 모델 |
+| `db-design.md` | DB 테이블 상세 |
+| `swmm-spec.md` | SWMM 입출력과 risk snapshot 구조 |
 
 ## 구성도
 
@@ -65,7 +78,7 @@ flowchart LR
 | `apps/simulation`               | SWMM 엔진 API, 에디터 변환 API, WebSocket consumer, 전역 엔진 상태              |
 | `swmm_engine/converter`         | React editor layout JSON을 SWMM INP/report/mapping으로 변환                     |
 | `swmm_engine/engine`            | PySWMM 세션 생성, tick loop, pause/resume/stop/control 처리                     |
-| `swmm_engine/risk`              | snapshot 구조 검증, deterministic 위험 이벤트 판정, LLM context 생성            |
+| `swmm_engine/risk`              | snapshot 구조 검증, deterministic 위험 이벤트 판정, 우선순위 점수 계산, LLM context 생성 |
 | `swmm_engine/llm_dispatcher.py` | 위험 snapshot을 외부 LLM 서버로 전송하고 LangChain 상황 ID와 문자 발송 묶음/cooldown 정책을 관리 |
 | `legacy`                        | 예전 `/api/simulations/` 흐름과 테스트 보관                                     |
 | `backend/docs`                  | 현재 구현 기준 기술 문서                                                        |
@@ -127,6 +140,9 @@ flowchart LR
    `source`, `sourceId`, `severity`를 사용해 `HazardEvent`를 생성한다.
    `event_key=runId:hazard_type:target_id:hazard_level`로 같은 실행의 중복 위험
    로그 생성을 방지한다.
+   위험 이벤트에는 `priorityScore`, `priorityBand`, `priorityReasons`를 계산해
+   붙인다. 우선순위는 침수/월류, 역류, 100% 막힘, node 위험, 수치 초과량,
+   forecast 상승 기울기를 기준으로 산정한다.
 11. `apps.monitoring.services.forecast_state`는 broadcast snapshot에서 예측에
    필요한 최소 metric만 runtime 메모리 buffer에 저장한다. 수위 변화량 metric과
    함께 React 제어에서 들어온 `links.blockageRatio`도 저장한다.
@@ -156,18 +172,21 @@ flowchart LR
    않는다.
 3. 상세 조회 `GET /api/hazards/{id}`는 해당 위험 대상의 당시 수치만
    `metrics_snapshot`으로 반환한다.
-4. 관리자가 `POST /api/hazards/{id}/actions`로 조치 내용, 결과 상세, 재발 시
-   참고사항을 저장하면 `HazardAction`이 생성된다.
-5. `complete=false`이면 `HazardEvent`는 `status=IN_PROGRESS`로 변경된다.
-6. `complete=true`이면 `HazardEvent`는 실제 삭제하지 않고 `status=RESOLVED`,
+4. 관리자가 `POST /api/hazards/{id}/actions`로 조치 내용을 저장하면
+   `HazardAction`이 생성되고 `HazardEvent`는 `status=IN_PROGRESS`로 변경된다.
+5. 조치 시작 단계에는 결과가 없으므로 `HazardCaseEmbedding`을 만들지 않고
+   FastAPI/LangChain maintenance log endpoint로도 전송하지 않는다.
+6. 관리자가 `PATCH /api/hazards/{id}/actions/{action_id}`로 결과 상세와 재발 시
+   참고사항을 저장하면 기존 `HazardAction`이 업데이트된다.
+7. 조치 완료 시 `HazardEvent`는 실제 삭제하지 않고 `status=RESOLVED`,
    `is_deleted=true`, `resolved_at=현재 시각`으로 논리 삭제된다.
-7. 조치 저장 시 위험 상황과 조치 내용을 결합한 `embedding_text`를 만들고
-   `HazardCaseEmbedding`에 저장한다. 현재 VectorDB 연동은 MVP 더미 구현으로
-   `hazard-case-{uuid}` 형식의 `vector_id`만 생성한다.
-8. Django는 위험 사건, 당시 주요 지표, 조치/결과/재발 참고사항을 구조화해
+8. 조치 완료 시점에 위험 상황, 조치 내용, 결과, 재발 참고사항을 결합한
+   `embedding_text`를 만들고 `HazardCaseEmbedding`에 저장한다. 현재 VectorDB
+   연동은 MVP 더미 구현으로 `hazard-case-{uuid}` 형식의 `vector_id`만 생성한다.
+9. Django는 위험 사건, 당시 주요 지표, 조치/결과/재발 참고사항을 구조화해
    FastAPI/LangChain 서버의 maintenance log endpoint로 POST한다. 요청 body는
    `event`, `metrics`, `action` 객체를 포함한다.
-9. FastAPI 응답의 `vector_id` 또는 실패 메시지는 `HazardAction`의
+10. FastAPI 응답의 `vector_id` 또는 실패 메시지는 `HazardAction`의
    `fastapi_*` 필드에 저장한다. FastAPI 연동 실패는 조치 저장과 위험 로그 완료
    처리를 롤백하지 않는다.
 
@@ -194,7 +213,10 @@ flowchart LR
    만든다.
 7. 예측 결과의 `WARNING/CRITICAL` 이벤트는 React가 표시할 수 있고,
    `CRITICAL` 예측은 LLM dispatch의 입력 기준으로 사용된다.
-8. 이 1차 구현은 단일 프로세스 runtime state 기반이다. 서버 재시작 또는 다중
+8. forecast `riskEvents`도 우선순위 점수를 포함한다. 따라서 LLM 서버는
+   `swmm_raw_data`의 `riskEvents[].priorityScore`, `priorityBand`,
+   `priorityReasons`로 여러 위험 중 먼저 조치할 대상을 판단할 수 있다.
+9. 이 1차 구현은 단일 프로세스 runtime state 기반이다. 서버 재시작 또는 다중
    프로세스 배포에서는 예측 buffer가 공유되지 않는다.
 
 ## SWMM 교체 지점

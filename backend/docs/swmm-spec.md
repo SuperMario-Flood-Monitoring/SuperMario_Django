@@ -2,7 +2,7 @@
 
 ## 문서 정보
 
-- 기준일: 2026-06-23
+- 기준일: 2026-06-29
 - 기준 구현: `swmm_engine/converter`, `swmm_engine/engine`, `swmm_engine/risk`
 - 출력 형식: JSON
 - 엔진: PySWMM 2.1.0 / EPA SWMM 5.2.4
@@ -273,6 +273,29 @@ React editor 객체 하나가 여러 SWMM 객체로 분해될 수 있어 editor 
 `balanced` 정책은 시작 직후 30 tick 동안 미세 역류를 안정화 구간으로 보고,
 역류 유량과 지속시간 기준을 만족한 뒤에만 위험도를 올린다.
 
+### 위험 우선순위
+
+각 `risk.events[]` 항목에는 현장 조치 순서를 정하기 위한 계산 필드가 포함된다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `priorityScore` | number | 위험도, 이벤트 유형, 대상 유형, 주요 수치 초과량, 예측 상승량을 합산한 점수 |
+| `priorityBand` | string | `P1`, `P2`, `P3`, `P4` 중 하나. `P1`이 가장 우선 |
+| `priorityReasons` | string[] | 점수 산정에 사용한 주요 근거 |
+
+우선순위는 `swmm_engine/risk/priority.py`에서 계산한다. 현재 기준은 다음과
+같다.
+
+```text
+- 침수/월류와 floodingCms > 0을 가장 높게 본다.
+- REVERSE_FLOW, direction=reverse, flowCms < 0은 높은 점수를 준다.
+- blockageRatio >= 1.0은 100% 막힘으로 높은 점수를 준다.
+- node 위험은 link 위험보다 약간 높은 가중치를 준다.
+- 같은 CRITICAL이면 depthRatio, fullness, capacityRatio, blockageRatio,
+  floodingCms의 초과량을 반영한다.
+- forecast 이벤트는 predictedValue-currentValue와 slopePerSecond를 반영한다.
+```
+
 SWMM 런타임 snapshot 자체는 현재 HTTP/WebSocket으로 동일한 구조를 전달하며
 상세도 선택 옵션은 없다. 다만 LLM으로 넘기는 분석 context는
 `RISK_CONTEXT_LEVEL`에서 `optimal`, `medium`, `full` 중 하나로 조정할 수 있다.
@@ -306,7 +329,7 @@ context level은 현재 `optimal`이며, 위험 이벤트, 영향 객체, 전역
 조회한다. `bot_token` row가 없으면 `TELEGRAM_BOT_TOKEN`은 `null`, 대상자가
 없으면 `TELEGRAM_CHAT_ID`는 빈 배열이다.
 
-LLM 발송은 `backend/docs/notification-dispatch-policy.md`의 문자 발송 정책을
+LLM 발송은 `backend/docs/policy.md`의 문자 발송 정책을
 따른다. 일반 CRITICAL 위험은 `SUPERMARIO_LLM_AGGREGATION_SECONDS` 동안 묶은 뒤
 1회 발송하고, 발송 요청 시점부터 `SUPERMARIO_LLM_DISPATCH_COOLDOWN_SECONDS`
 동안 새 일반 위험을 pending queue에 누적한다. cooldown 이후 pending queue에
