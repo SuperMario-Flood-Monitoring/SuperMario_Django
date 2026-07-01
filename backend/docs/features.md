@@ -133,10 +133,9 @@ payload와 maintenance payload에도 포함된다.
 
 `apps/notification`은 Telegram 발송에 필요한 DB 값을 관리한다.
 
-- `BotToken`: 운영자가 수동으로 넣는 Telegram bot token
+- `BotToken`: 이전 DB 기반 Telegram bot token 모델. 현재 LLM 발송 payload는 `.env` 값을 사용한다.
 - `NotificationRecipient`: 직원 이름과 chat ID
 - 수신자 생성, 조회, 삭제 API
-- LLM 분석 payload용 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` 생성
 
 Django는 Telegram API를 직접 호출하지 않는다.
 

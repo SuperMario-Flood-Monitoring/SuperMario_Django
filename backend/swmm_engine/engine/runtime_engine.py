@@ -58,6 +58,7 @@ DEFAULT_MAX_RAINFALL_MM_PER_HOUR = 100.0
 DEFAULT_SPEED_MULTIPLIER = 1.0
 MAX_SPEED_MULTIPLIER = 10.0
 MAX_RAINFALL_RATIO = 1000.0
+DEFAULT_RUNTIME_DURATION_SECONDS = 365 * 24 * 60 * 60
 RUNTIME_TICK_LOG_DIR = PACKAGE_DIR / "logs" / "runtime-tick-logs"
 RISK_CONTEXT_LEVELS = ("optimal", "medium", "full")
 
@@ -67,6 +68,16 @@ def env_flag(name: str, default: bool = False) -> bool:
     if raw_value is None:
         return default
     return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(float(str(raw_value).strip()))
+    except (TypeError, ValueError):
+        return default
 
 
 def env_path(name: str, default: Path) -> Path:
@@ -96,6 +107,11 @@ RISK_RESOLUTION_GRACE_TICKS = int(RISK_POLICY.get("resolutionGraceTicks") or 5)
 RISK_PAUSE_ON_TRIGGER = env_flag("SUPERMARIO_RISK_PAUSE_ON_TRIGGER")
 RISK_LLM_SUSTAIN_SECONDS = LLM_DISPATCH_COOLDOWN_SECONDS
 RISK_LLM_EMERGENCY_EVENT_TYPES = {"BLOCKAGE_CLOSED", "REVERSE_FLOW"}
+FULL_NODE_BLOCKAGE_THRESHOLD = 0.999999
+RUNTIME_DURATION_SECONDS = max(
+    1,
+    env_int("SUPERMARIO_SWMM_RUNTIME_DURATION_SECONDS", DEFAULT_RUNTIME_DURATION_SECONDS),
+)
 RISK_SEVERITY_RANK = {
     "NORMAL": 0,
     "WATCH": 1,
@@ -121,6 +137,7 @@ class RuntimeModelSpec:
     mapping: dict[str, Any]
     report: dict[str, Any]
     source: str
+    duration_seconds: int
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
 
     def cleanup(self) -> None:
@@ -162,18 +179,33 @@ def build_editor_conversion_payload(payload: dict[str, Any]) -> dict[str, Any]:
     scale_m_per_px = float(payload.get("scaleMPerPx", 0.5) or 0.5)
     map_height = float(payload.get("mapHeight", 2000.0) or 2000.0)
     title = str(payload.get("title") or "React editor layout에서 생성한 SWMM model")
+    duration_seconds = runtime_duration_seconds(payload)
+    step_seconds = max(1, int(payload.get("stepSeconds") or DEFAULT_STEP_SECONDS))
     result = convert_layout(layout, scale_m_per_px=scale_m_per_px, map_height=map_height)
-    inp_text = render_inp(result, title=title)
+    inp_text = render_inp(result, title=title, duration_seconds=duration_seconds)
     report = render_conversion_report(result, inp_text=inp_text)
+    report["runtimeDurationSeconds"] = duration_seconds
+    report["runtimeMaxStepIndex"] = math.ceil(duration_seconds / step_seconds)
     mapping = render_mapping_json(result)
     return {
         "ok": len(result.errors) == 0,
         "inpText": inp_text,
         "report": report,
         "mapping": mapping,
+        "durationSeconds": duration_seconds,
         "warnings": result.warnings,
         "errors": result.errors,
     }
+
+
+def runtime_duration_seconds(payload: dict[str, Any]) -> int:
+    raw_value = payload.get("durationSeconds")
+    control = payload.get("control")
+    if raw_value is None and isinstance(control, dict):
+        raw_value = control.get("durationSeconds")
+    if raw_value is None:
+        return RUNTIME_DURATION_SECONDS
+    return max(1, int(safe_number(raw_value, RUNTIME_DURATION_SECONDS)))
 
 
 def build_runtime_model_spec(payload: dict[str, Any]) -> RuntimeModelSpec:
@@ -212,6 +244,7 @@ def build_runtime_model_spec(payload: dict[str, Any]) -> RuntimeModelSpec:
         mapping=conversion["mapping"],
         report=conversion["report"],
         source="react-editor-json",
+        duration_seconds=int(conversion["durationSeconds"]),
         temp_dir=temp_dir,
     )
 
@@ -340,6 +373,8 @@ class RealtimeSwmmSession:
 
         self.mapping = spec.mapping
         self.report = spec.report
+        self.duration_seconds = max(1, int(spec.duration_seconds))
+        self.max_step_index = math.ceil(self.duration_seconds / self.step_seconds)
         self.swmm_nodes = self.mapping.get("swmmNodes") or {}
         self.swmm_links = self.mapping.get("swmmLinks") or {}
         self.node_connected_links = self.build_node_connected_links()
@@ -376,6 +411,61 @@ class RealtimeSwmmSession:
             if to_node:
                 connected.setdefault(to_node, set()).add(link_id)
         return connected
+
+    def upstream_nodes_for_links(self, link_ids: set[str]) -> set[str]:
+        """막힌 link의 상류 SWMM node를 찾는다.
+
+        이 값은 위험 판단용 보조 정보로만 사용하고, pipe/editor link 상태에는
+        섞지 않는다. 막힌 관을 선택했을 때 노드 수위/외부 유입이 관 자체의
+        상태처럼 계속 증가해 보이면 런타임 의미가 흐려진다.
+        """
+
+        upstream_nodes: set[str] = set()
+        for link_id in link_ids:
+            link_state = self.blockage_for_link(link_id)
+            if link_state <= 0:
+                continue
+            meta = self.swmm_links.get(link_id) or {}
+            from_node = str(meta.get("fromNode") or "")
+            if from_node:
+                upstream_nodes.add(from_node)
+        return upstream_nodes
+
+    def fully_blocked_outflow_nodes(self) -> set[str]:
+        """100% 막힘은 해당 link의 상류 node outflow가 닫힌 상태로 해석한다."""
+
+        blocked_nodes: set[str] = set()
+        for object_id, blockage in self.blockages_by_id.items():
+            if blockage < FULL_NODE_BLOCKAGE_THRESHOLD:
+                continue
+            if object_id in self.swmm_nodes:
+                blocked_nodes.add(object_id)
+                continue
+            link_meta = self.swmm_links.get(object_id) or {}
+            from_node = str(link_meta.get("fromNode") or "")
+            if from_node:
+                blocked_nodes.add(from_node)
+        return blocked_nodes
+
+    def outflow_node_blockage_for_link(self, link_id: str) -> float:
+        meta = self.swmm_links.get(link_id) or {}
+        from_node = str(meta.get("fromNode") or "")
+        if from_node and from_node in self.fully_blocked_outflow_nodes():
+            return 1.0
+        return 0.0
+
+    def blockage_control_link_ids(self) -> set[str]:
+        link_ids = set(self.control_link_ids)
+        blocked_nodes = self.fully_blocked_outflow_nodes()
+        if not blocked_nodes:
+            return link_ids
+        for link_id, meta in self.swmm_links.items():
+            link_type = str(meta.get("kind") or "").upper()
+            if link_type not in {"CONDUIT", *CONTROL_LINK_TYPES}:
+                continue
+            if str(meta.get("fromNode") or "") in blocked_nodes:
+                link_ids.add(link_id)
+        return link_ids
 
     def build_control_link_ids(self) -> set[str]:
         targets = {
@@ -436,6 +526,8 @@ class RealtimeSwmmSession:
             "modelTime": self.model_time_iso(),
             "stepSeconds": self.step_seconds,
             "stepIndex": self.step_index,
+            "durationSeconds": self.duration_seconds,
+            "maxStepIndex": self.max_step_index,
             "control": self.control_state(),
             **(payload or {}),
         })
@@ -511,6 +603,7 @@ class RealtimeSwmmSession:
         meta = self.swmm_links.get(link_id) or {}
         for node_id in (str(meta.get("fromNode") or ""), str(meta.get("toNode") or "")):
             blockage = max(blockage, self.blockages_by_id.get(node_id, 0.0))
+        blockage = max(blockage, self.outflow_node_blockage_for_link(link_id))
         return max(0.0, min(1.0, blockage))
 
     def apply_blockage_to_link(self, link_id: str, blockage_ratio: float) -> None:
@@ -553,7 +646,7 @@ class RealtimeSwmmSession:
             return
 
     def apply_blockages(self) -> None:
-        for link_id in self.control_link_ids:
+        for link_id in self.blockage_control_link_ids():
             self.apply_blockage_to_link(link_id, self.blockage_for_link(link_id))
 
     def apply_controls(self) -> None:
@@ -633,43 +726,59 @@ class RealtimeSwmmSession:
     def aggregate_editor_states(self, node_states: dict[str, Any], link_states: dict[str, Any]) -> dict[str, Any]:
         editor_states: dict[str, Any] = {}
         for editor_id, refs in (self.mapping.get("editorNodes") or {}).items():
-            linked_node_ids = [node_id for node_id in refs.get("swmmNodes", []) if node_id in node_states]
+            linked_node_ids_set = {node_id for node_id in refs.get("swmmNodes", []) if node_id in node_states}
             linked_link_ids = set(link_id for link_id in refs.get("swmmLinks", []) if link_id in link_states)
             is_manhole_editor_node = any(
                 (self.swmm_nodes.get(node_id) or {}).get("sourceEditorType") == "manhole"
-                for node_id in linked_node_ids
+                for node_id in linked_node_ids_set
             )
             is_storage_facility_editor_node = any(
                 (self.swmm_nodes.get(node_id) or {}).get("sourceEditorType") in {"catchBasin", "facility"}
-                for node_id in linked_node_ids
+                for node_id in linked_node_ids_set
             )
             if is_manhole_editor_node or is_storage_facility_editor_node:
-                for node_id in linked_node_ids:
+                for node_id in linked_node_ids_set:
                     linked_link_ids.update(self.node_connected_links.get(node_id, set()))
+            linked_node_ids = sorted(node_id for node_id in linked_node_ids_set if node_id in node_states)
             linked_node_states = [node_states[node_id] for node_id in linked_node_ids]
             linked_link_states = [link_states[link_id] for link_id in linked_link_ids if link_id in link_states]
+            fill_link_states = [
+                state
+                for link_id, state in ((link_id, link_states[link_id]) for link_id in linked_link_ids if link_id in link_states)
+                if state.get("blockageRatio", self.blockage_for_link(link_id)) < FULL_NODE_BLOCKAGE_THRESHOLD
+            ]
             if not linked_node_states and not linked_link_states:
                 continue
             editor_states[editor_id] = {
                 "maxDepthRatio": max((state.get("depthRatio", 0.0) for state in linked_node_states), default=0.0),
-                "maxFullness": max((state.get("fullness", 0.0) for state in linked_link_states), default=0.0),
-                "maxCapacityRatio": max((state.get("capacityRatio", 0.0) for state in linked_link_states), default=0.0),
+                "maxFullness": max((state.get("fullness", 0.0) for state in fill_link_states), default=0.0),
+                "maxCapacityRatio": max((state.get("capacityRatio", 0.0) for state in fill_link_states), default=0.0),
                 "maxBlockageRatio": max((state.get("blockageRatio", 0.0) for state in linked_link_states), default=0.0),
                 "maxFloodingCms": max((state.get("floodingCms", 0.0) for state in linked_node_states), default=0.0),
-                "flowCms": max((state.get("flowCms", 0.0) for state in linked_link_states), key=abs, default=0.0),
-                "maxVelocityMps": max((state.get("velocityMps", 0.0) for state in linked_link_states), key=abs, default=0.0),
+                "flowCms": max((state.get("flowCms", 0.0) for state in fill_link_states), key=abs, default=0.0),
+                "maxVelocityMps": max((state.get("velocityMps", 0.0) for state in fill_link_states), key=abs, default=0.0),
                 "totalInflowCms": max((state.get("totalInflowCms", 0.0) for state in linked_node_states), default=0.0),
             }
         for editor_id, refs in (self.mapping.get("editorLinks") or {}).items():
-            linked_link_states = [link_states[link_id] for link_id in refs.get("swmmLinks", []) if link_id in link_states]
+            linked_link_ids = set(link_id for link_id in refs.get("swmmLinks", []) if link_id in link_states)
+            linked_node_states: list[dict[str, Any]] = []
+            linked_link_states = [link_states[link_id] for link_id in linked_link_ids if link_id in link_states]
+            fill_link_states = [
+                state
+                for link_id, state in ((link_id, link_states[link_id]) for link_id in linked_link_ids if link_id in link_states)
+                if state.get("blockageRatio", self.blockage_for_link(link_id)) < FULL_NODE_BLOCKAGE_THRESHOLD
+            ]
             if not linked_link_states:
                 continue
             editor_states[editor_id] = {
-                "maxFullness": max((state.get("fullness", 0.0) for state in linked_link_states), default=0.0),
-                "maxCapacityRatio": max((state.get("capacityRatio", 0.0) for state in linked_link_states), default=0.0),
+                "maxDepthRatio": max((state.get("depthRatio", 0.0) for state in linked_node_states), default=0.0),
+                "maxFullness": max((state.get("fullness", 0.0) for state in fill_link_states), default=0.0),
+                "maxCapacityRatio": max((state.get("capacityRatio", 0.0) for state in fill_link_states), default=0.0),
                 "maxBlockageRatio": max((state.get("blockageRatio", 0.0) for state in linked_link_states), default=0.0),
-                "flowCms": max((state.get("flowCms", 0.0) for state in linked_link_states), key=abs, default=0.0),
-                "maxVelocityMps": max((state.get("velocityMps", 0.0) for state in linked_link_states), key=abs, default=0.0),
+                "maxFloodingCms": max((state.get("floodingCms", 0.0) for state in linked_node_states), default=0.0),
+                "flowCms": max((state.get("flowCms", 0.0) for state in fill_link_states), key=abs, default=0.0),
+                "maxVelocityMps": max((state.get("velocityMps", 0.0) for state in fill_link_states), key=abs, default=0.0),
+                "totalInflowCms": max((state.get("totalInflowCms", 0.0) for state in linked_node_states), default=0.0),
             }
         return editor_states
 
@@ -1004,6 +1113,8 @@ class RealtimeSwmmSession:
             "modelTime": self.model_time_iso(),
             "stepSeconds": self.step_seconds,
             "stepIndex": self.step_index,
+            "durationSeconds": self.duration_seconds,
+            "maxStepIndex": self.max_step_index,
             "control": self.control_state(),
             "nodes": node_states,
             "links": link_states,
@@ -1054,6 +1165,8 @@ class SwmmRuntimeEngine:
             "hasSession": session is not None,
             "stepIndex": session.step_index if session else 0,
             "stepSeconds": session.step_seconds if session else DEFAULT_STEP_SECONDS,
+            "durationSeconds": session.duration_seconds if session else RUNTIME_DURATION_SECONDS,
+            "maxStepIndex": session.max_step_index if session else math.ceil(RUNTIME_DURATION_SECONDS / DEFAULT_STEP_SECONDS),
             "modelTime": session.model_time_iso() if session else None,
             "control": session.control_state() if session else {
                 "rainfallRatio": 0.0,

@@ -151,9 +151,10 @@ flowchart LR
    만족한 metric만 위험 이벤트로 만든다. 단, 관 막힘은 사용자가 시뮬레이션 중
    변경한 현재 제어 상태이므로 `blockageRatio >= 1.0`이면 관측 안정화 시간
    전에도 CRITICAL forecast event로 만든다. forecast 결과에 `CRITICAL` 이벤트가
-   있으면 `llm_dispatcher`가 bot token과 수신자 chat ID를 조회해 forecast
-   context를 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다. 즉 LLM 분석 요청 기준은
-   현재 위험 발생이 아니라 10분 뒤 위험 예측 또는 직접 제어된 막힘 위험이다.
+   있으면 `llm_dispatcher`가 `.env`의 bot token과 DB에 저장된 수신자 chat ID를
+   붙여 forecast context를 `SUPERMARIO_LLM_ANALYZE_URL`로 POST한다. 즉 LLM 분석
+   요청 기준은 현재 위험 발생이 아니라 10분 뒤 위험 예측 또는 직접 제어된 막힘
+   위험이다.
 
 ```json
 {
@@ -205,7 +206,7 @@ flowchart LR
    기반 metric은 `NORMAL` forecast를 반환하고 LLM dispatch payload를 만들지
    않는다. `links.blockageRatio`는 제어 상태 자체가 위험 신호이므로 이 안정화
    조건의 예외다.
-5. 맑음/약한비/폭우의 `rainfallRatio`에 따라 최소 현재 수위 기준을 다르게
+5. 맑음/우천/호우/폭우의 `rainfallRatio`에 따라 최소 현재 수위 기준을 다르게
    적용한다. 예측값이 `CRITICAL` 기준 이상이어도 현재값이 너무 낮으면
    위험 이벤트로 만들지 않는다.
 6. `links.blockageRatio >= 1.0`은 `PREDICTED_BLOCKAGE_CLOSED` CRITICAL,

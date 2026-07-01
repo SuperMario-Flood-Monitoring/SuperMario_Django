@@ -149,6 +149,37 @@ Python 단독 실행은 별도 DB 환경변수가 없으면 `backend/db.sqlite3`
 | `DATABASE_ENGINE` | `sqlite` | `sqlite` 또는 `postgres` |
 | `POSTGRES_DB` | `supermario` | PostgreSQL DB 이름 |
 | `POSTGRES_USER` | `supermario` | PostgreSQL 사용자 |
+| `POSTGRES_PASSWORD` | 없음 | PostgreSQL 비밀번호. 운영에서는 반드시 Secret으로 관리 |
+| `POSTGRES_HOST` | `postgres` | PostgreSQL host. Docker Compose에서는 service 이름 |
+| `POSTGRES_PORT` | `5432` | PostgreSQL container 내부 포트 |
+| `POSTGRES_HOST_PORT` | `5432` | 로컬 Docker Compose가 host에 노출할 PostgreSQL 포트 |
+| `ENABLE_LEGACY_SIMULATION_API` | `false` | 이전 simulation API 활성화 여부 |
+| `SUPERMARIO_LLM_BASE_URL` | local `http://127.0.0.1:8001/llm` | LLM/FastAPI 서버 base URL |
+| `SUPERMARIO_LLM_ANALYZE_URL` | `SUPERMARIO_LLM_BASE_URL/analyze` | 위험 context 분석 요청 URL |
+| `SUPERMARIO_LLM_MAINTENANCE_LOG_URL` | `SUPERMARIO_LLM_BASE_URL/maintenance/log/` | 관리자 장애 조치 원문 전달 URL |
+| `SUPERMARIO_LLM_MAINTENANCE_LOG_TIMEOUT_SECONDS` | `10` | 장애 조치 전달 요청 timeout 초 |
+| `TELEGRAM_BOT_TOKEN` | 없음 | LLM 분석 결과 Telegram 발송용 bot token |
+| `SUPERMARIO_FORECAST_MINUTES` | `10` | runtime state 기반 미래 위험 예측 horizon 분 |
+| `SUPERMARIO_FORECAST_WINDOW_SECONDS` | `120` | 예측 증가율 계산에 사용할 최근 관측 구간 초 |
+| `SUPERMARIO_FORECAST_BUFFER_SECONDS` | `900` | 메모리에 유지할 예측용 snapshot 샘플 기간 초 |
+| `SUPERMARIO_SWMM_RUNTIME_DURATION_SECONDS` | `31536000` | React editor layout에서 생성하는 SWMM 런타임 모델의 실행 길이. 기본값은 365일로 1초 tick 기준 31,536,000 tick |
+| `SUPERMARIO_RISK_POLICY_LEVEL` | `balanced` | 이상상황 확정 기준 레벨. `sensitive`, `balanced`, `strict` 지원 |
+| `SUPERMARIO_RISK_CONTEXT_LEVEL` | `optimal` | LLM trigger payload에 직접 붙일 context 크기. `optimal`, `medium`, `full` 지원 |
+| `SUPERMARIO_RISK_PAUSE_ON_TRIGGER` | `false` | 디버깅용. `true`이면 LLM trigger 발생 tick에서 엔진을 자동 일시정지 |
+| `SUPERMARIO_RISK_EXPORT_CONTEXT_ON_TRIGGER` | `false` | 디버깅용. `true`이면 LLM trigger 발생 tick에서 context 파일을 레벨별로 저장 |
+| `SUPERMARIO_RISK_CONTEXT_EXPORT_DIR` | `backend/swmm_engine/logs/risk-context-exports` | context 파일 저장 경로 |
+
+> macOS 기본 `python3`가 3.9 계열이면 `Django==6.0.6` 설치가 실패합니다. 이 경우 Homebrew, pyenv 등으로 Python 3.12 이상을 준비한 뒤 가상환경을 생성해야 합니다.
+
+## 개발 기준
+
+- Scenario는 React에서 저장한 배수도 JSON의 서버 측 source data입니다.
+- SWMM 계산 결과는 `swmm_engine` runtime snapshot을 기준으로 합니다.
+- `stepSeconds: 1` 실시간 계약을 기본값으로 유지합니다.
+- React layout 객체 ID와 SWMM 변환 mapping을 임의로 분리하지 않습니다.
+- 엔진은 Django view에서 직접 계산하지 않고 `swmm_engine.interface`를 통해 실행합니다.
+- 웹소켓 broadcast는 Channels group event를 사용하며, `swmm.message` event는 consumer의 `swmm_message` handler로 전달됩니다.
+- LLM 서버 호출은 SWMM 엔진 내부가 아니라 `swmm_engine.llm_dispatcher.dispatch_llm_analysis()`에서 연결합니다.
 | `POSTGRES_PASSWORD` | 없음 | PostgreSQL 비밀번호 |
 | `SUPERMARIO_JWT_SECRET_KEY` | `DJANGO_SECRET_KEY` | JWT 서명 키 |
 | `SUPERMARIO_LLM_BASE_URL` | local `http://127.0.0.1:8001/llm` | LLM 서버 base URL |
