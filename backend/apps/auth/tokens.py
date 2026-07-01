@@ -15,7 +15,7 @@ from .models import User
 
 TokenType = Literal["access", "refresh"]
 
-ACCESS_TOKEN_SECONDS = 30 * 60
+ACCESS_TOKEN_SECONDS = 30 * 60 * 4
 REFRESH_TOKEN_SECONDS = 7 * 24 * 60 * 60
 
 
